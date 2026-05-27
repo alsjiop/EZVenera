@@ -1,0 +1,13 @@
+EZVenera is a simplified and actively maintained fork direction of Venera, focused on plugin compatibility, long-term maintainability, and a practical comic reading experience on Android and Windows.
+
+Features:
+
+* Install and use compatible Venera-style comic source plugins
+* Search, browse categories, and open comic detail pages from installed sources
+* Read online chapters with horizontal, right-to-left, and top-to-bottom modes
+* Download chapters for local reading
+* Keep reading history and favorites
+* Add local comic folders and read image-based local libraries
+* Configure reader behavior such as page direction, tap zones, animation, cache, and volume-key paging
+
+This project is designed as a compact, maintainable reader rather than a feature-heavy clone. It keeps the core browsing, plugin runtime, download, local library, and reader workflows while avoiding unnecessary complexity.

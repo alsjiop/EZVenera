@@ -1,0 +1,1 @@
+Plugin-based comic reader for Android and Windows

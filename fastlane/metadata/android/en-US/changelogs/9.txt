@@ -1,0 +1,1 @@
+Reader and local library improvements: fixed local page layout, improved chapter affordance and ordering, added persisted chapter reverse order, and made top-to-bottom reading stitch images without gaps.
