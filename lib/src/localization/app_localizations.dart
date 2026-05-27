@@ -337,6 +337,25 @@ class AppLocalizations {
 
   String navLabel(String key) => _value('nav.$key');
 
+  String get searchAggregate => isChinese ? '聚合搜索' : 'Aggregate Search';
+  String get searchAggregateSubtitle =>
+      isChinese ? '同时搜索所有图源' : 'Search all sources at once';
+  String get searchSource => isChinese ? '图源' : 'Source';
+  String get searchKeyword => isChinese ? '关键词' : 'Keyword';
+  String get searchKeywordHint => isChinese
+      ? '输入标题、标签或图源支持的关键词'
+      : 'Enter title, tag, or source-specific keyword';
+  String get searchSearch => isChinese ? '搜索' : 'Search';
+  String get searchClearResults => isChinese ? '清空结果' : 'Clear Results';
+  String get searchNoResults =>
+      isChinese ? '未找到搜索结果' : 'No search results found';
+  String get searchTimeout => isChinese ? '搜索超时' : 'Search timed out';
+  String get searchLoaderMissing =>
+      isChinese ? '该图源未配置搜索加载器。' : 'Search loader is not configured.';
+  String get searchNoSearchableSources => isChinese
+      ? '还没有已安装的可搜索图源。请先从 https://github.com/WEP-56/EZvenera-config 添加图源配置。'
+      : 'No searchable sources are installed yet. Add source configs from https://github.com/WEP-56/EZvenera-config first.';
+
   String get localHistory => _value('local.history');
   String get localFavorites => _value('local.favorites');
   String get localDownloads => _value('local.downloads');

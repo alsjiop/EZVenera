@@ -182,9 +182,9 @@ class _SourcesPageState extends State<SourcesPage> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.sourcesInstallFailed)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(l10n.sourcesInstallFailed)));
     }
   }
 
@@ -263,6 +263,14 @@ class _SourcesPageState extends State<SourcesPage> {
       final selectedUrl = await showModalBottomSheet<String>(
         context: context,
         isScrollControlled: true,
+        showDragHandle: true,
+        useSafeArea: true,
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.sizeOf(context).height * 0.82,
+        ),
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
         builder: (context) {
           final items = decoded.whereType<Map>().map((item) {
             return _RepoIndexItem.fromJson(Map<String, dynamic>.from(item));
@@ -460,9 +468,9 @@ class _SourceCardState extends State<_SourceCard> {
       if (!context.mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.sourcesUpdated(source.name))),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(l10n.sourcesUpdated(source.name))));
     } catch (error) {
       if (!context.mounted) {
         return;
@@ -504,9 +512,9 @@ class _SourceCardState extends State<_SourceCard> {
       if (!context.mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.sourcesDeleted(source.name))),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(l10n.sourcesDeleted(source.name))));
     } catch (error) {
       if (!context.mounted) {
         return;
@@ -699,8 +707,7 @@ class _SourceAccountTileState extends State<_SourceAccountTile> {
               [
                 if (account.login != null) l10n.sourcesPasswordLogin,
                 if (account.cookieFields != null) l10n.sourcesCookieLogin,
-                if (account.loginWebsite != null)
-                  l10n.sourcesWebLoginAvailable,
+                if (account.loginWebsite != null) l10n.sourcesWebLoginAvailable,
               ].join(' / '),
             ),
             trailing: isLoading
@@ -980,9 +987,9 @@ class _SourceAccountTileState extends State<_SourceAccountTile> {
       if (!mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.sourcesWebviewNoStatus)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(l10n.sourcesWebviewNoStatus)));
       return;
     }
 
@@ -1016,36 +1023,36 @@ class _RepoIndexSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
-    return SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ListTile(
-            title: Text(l10n.sourcesComicSourceList),
-            subtitle: Text(indexUrl),
-          ),
-          Flexible(
-            child: ListView.builder(
-              shrinkWrap: true,
-              itemCount: items.length,
-              itemBuilder: (context, index) {
-                final item = items[index];
-                final installed = installedKeys.contains(item.key);
-                return ListTile(
-                  title: Text(item.name),
-                  subtitle: Text('${item.key} - v${item.version}'),
-                  trailing: installed ? const Icon(Icons.check) : null,
-                  onTap: installed
-                      ? null
-                      : () => Navigator.of(
-                          context,
-                        ).pop(item.resolvedUrl(indexUrl)),
-                );
-              },
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        ListTile(
+          title: Text(l10n.sourcesComicSourceList),
+          subtitle: Text(indexUrl),
+        ),
+        Flexible(
+          child: ListView.builder(
+            shrinkWrap: true,
+            padding: EdgeInsets.only(
+              bottom: 16 + MediaQuery.paddingOf(context).bottom,
             ),
+            itemCount: items.length,
+            itemBuilder: (context, index) {
+              final item = items[index];
+              final installed = installedKeys.contains(item.key);
+              return ListTile(
+                title: Text(item.name),
+                subtitle: Text('${item.key} - v${item.version}'),
+                trailing: installed ? const Icon(Icons.check) : null,
+                onTap: installed
+                    ? null
+                    : () =>
+                          Navigator.of(context).pop(item.resolvedUrl(indexUrl)),
+              );
+            },
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }

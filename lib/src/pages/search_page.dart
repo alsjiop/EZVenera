@@ -1,10 +1,13 @@
 import 'dart:convert';
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
+import '../localization/app_localizations.dart';
 import '../plugin_runtime/models.dart';
 import '../plugin_runtime/plugin_runtime_controller.dart';
+import '../plugin_runtime/services/plugin_image_loader.dart';
 import '../state/app_state_controller.dart';
 import '../widgets/comic_card_grid.dart';
 import '../widgets/comic_display_toggle.dart';
@@ -18,6 +21,8 @@ class SearchPage extends StatefulWidget {
 }
 
 class _SearchPageState extends State<SearchPage> {
+  static const aggregateSourceTimeout = Duration(seconds: 20);
+
   final controller = PluginRuntimeController.instance;
   final appState = AppStateController.instance;
   final keywordController = TextEditingController();
@@ -26,6 +31,8 @@ class _SearchPageState extends State<SearchPage> {
   PluginSource? selectedSource;
   List<PluginComic> results = const <PluginComic>[];
   List<String> optionValues = const <String>[];
+  List<_AggregateSearchResult> aggregateResults =
+      const <_AggregateSearchResult>[];
   bool isSearching = false;
   String? searchError;
   int currentPage = 1;
@@ -33,6 +40,8 @@ class _SearchPageState extends State<SearchPage> {
   String? nextToken;
   String lastKeyword = '';
   bool searchFormExpanded = false;
+  bool aggregatedSearch = false;
+  int searchRun = 0;
 
   @override
   void initState() {
@@ -57,6 +66,7 @@ class _SearchPageState extends State<SearchPage> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context);
     final searchSources = _searchSources;
 
     return SafeArea(
@@ -65,10 +75,7 @@ class _SearchPageState extends State<SearchPage> {
         padding: const EdgeInsets.all(24),
         children: [
           if (searchSources.isEmpty)
-            const _EmptySearchState(
-              message:
-                  'No searchable sources are installed yet. Add source configs from https://github.com/WEP-56/EZvenera-config first.',
-            )
+            _EmptySearchState(message: l10n.searchNoSearchableSources)
           else ...[
             _buildSearchForm(context, searchSources),
             const SizedBox(height: 20),
@@ -83,8 +90,8 @@ class _SearchPageState extends State<SearchPage> {
                   ),
                 ),
               ),
-            if (results.isNotEmpty) const SizedBox(height: 20),
-            if (results.isNotEmpty)
+            if (_hasSearchResults) const SizedBox(height: 20),
+            if (!aggregatedSearch && results.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(bottom: 12),
                 child: Align(
@@ -92,18 +99,14 @@ class _SearchPageState extends State<SearchPage> {
                   child: const ComicDisplayToggle(dense: true),
                 ),
               ),
-            if (results.isNotEmpty)
-              ComicDisplay(
-                comics: results,
-                onTap: (comic) {
-                  Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (context) => ComicDetailsPage(comic: comic),
-                    ),
-                  );
-                },
-              ),
-            if (results.isNotEmpty) const SizedBox(height: 8),
+            if (aggregatedSearch && aggregateResults.isNotEmpty)
+              _AggregateSearchResultsView(
+                results: aggregateResults,
+                onTap: _openComic,
+              )
+            else if (results.isNotEmpty)
+              ComicDisplay(comics: results, onTap: _openComic),
+            if (_hasSearchResults) const SizedBox(height: 8),
             if (_canLoadMore)
               Align(
                 alignment: Alignment.centerLeft,
@@ -120,6 +123,8 @@ class _SearchPageState extends State<SearchPage> {
   }
 
   Widget _buildSearchForm(BuildContext context, List<PluginSource> sources) {
+    final l10n = AppLocalizations.of(context);
+
     return TapRegion(
       onTapOutside: (_) {
         keywordFocusNode.unfocus();
@@ -146,38 +151,55 @@ class _SearchPageState extends State<SearchPage> {
                 expanded: searchFormExpanded,
                 child: Column(
                   children: [
-                    DropdownButtonFormField<String>(
-                      initialValue: selectedSource?.key,
-                      decoration: const InputDecoration(
-                        border: OutlineInputBorder(),
-                        labelText: 'Source',
-                      ),
-                      items: [
-                        for (final source in sources)
-                          DropdownMenuItem<String>(
-                            value: source.key,
-                            child: Text(source.name),
-                          ),
-                      ],
-                      onChanged: isSearching
-                          ? null
-                          : (value) {
-                              _setSearchFormExpanded(true);
-                              _changeSource(value);
-                            },
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(l10n.searchAggregate),
+                      subtitle: Text(l10n.searchAggregateSubtitle),
+                      value: aggregatedSearch,
+                      onChanged: (value) {
+                        _setSearchFormExpanded(true);
+                        searchRun++;
+                        setState(() {
+                          isSearching = false;
+                          aggregatedSearch = value;
+                          _resetResultsLocally();
+                          searchError = null;
+                        });
+                        unawaited(_persistState());
+                      },
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 12),
+                    if (!aggregatedSearch) ...[
+                      DropdownButtonFormField<String>(
+                        initialValue: selectedSource?.key,
+                        decoration: InputDecoration(
+                          border: const OutlineInputBorder(),
+                          labelText: l10n.searchSource,
+                        ),
+                        items: [
+                          for (final source in sources)
+                            DropdownMenuItem<String>(
+                              value: source.key,
+                              child: Text(source.name),
+                            ),
+                        ],
+                        onChanged: (value) {
+                          _setSearchFormExpanded(true);
+                          _changeSource(value);
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                    ],
                   ],
                 ),
               ),
               TextField(
                 controller: keywordController,
                 focusNode: keywordFocusNode,
-                enabled: !isSearching,
                 decoration: InputDecoration(
                   border: const OutlineInputBorder(),
-                  labelText: 'Keyword',
-                  hintText: 'Enter title, tag, or source-specific keyword',
+                  labelText: l10n.searchKeyword,
+                  hintText: l10n.searchKeywordHint,
                   suffixIcon: AnimatedSwitcher(
                     duration: const Duration(milliseconds: 180),
                     child: searchFormExpanded
@@ -193,9 +215,9 @@ class _SearchPageState extends State<SearchPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    if (selectedSource case final source?) ...[
+                    if (!aggregatedSearch && selectedSource != null) ...[
                       const SizedBox(height: 16),
-                      ..._buildOptionWidgets(source),
+                      ..._buildOptionWidgets(selectedSource!),
                     ],
                     const SizedBox(height: 4),
                     Wrap(
@@ -203,13 +225,13 @@ class _SearchPageState extends State<SearchPage> {
                       runSpacing: 12,
                       children: [
                         FilledButton.icon(
-                          onPressed: isSearching ? null : _search,
+                          onPressed: _search,
                           icon: const Icon(Icons.search),
-                          label: const Text('Search'),
+                          label: Text(l10n.searchSearch),
                         ),
                         OutlinedButton(
-                          onPressed: isSearching ? null : _resetResults,
-                          child: const Text('Clear Results'),
+                          onPressed: _resetResults,
+                          child: Text(l10n.searchClearResults),
                         ),
                       ],
                     ),
@@ -255,6 +277,9 @@ class _SearchPageState extends State<SearchPage> {
   }
 
   bool get _canLoadMore {
+    if (aggregatedSearch) {
+      return false;
+    }
     final source = selectedSource?.search;
     if (source == null || results.isEmpty || isSearching) {
       return false;
@@ -277,7 +302,9 @@ class _SearchPageState extends State<SearchPage> {
       return;
     }
 
+    searchRun++;
     setState(() {
+      isSearching = false;
       selectedSource = source;
       optionValues = _defaultOptionsFor(source);
       _resetResultsLocally();
@@ -286,9 +313,30 @@ class _SearchPageState extends State<SearchPage> {
   }
 
   Future<void> _search() async {
-    final source = selectedSource?.search;
+    final l10n = AppLocalizations.of(context);
     final keyword = keywordController.text.trim();
-    if (source == null || keyword.isEmpty) {
+    if (keyword.isEmpty) {
+      searchRun++;
+      setState(() {
+        isSearching = false;
+        searchError = null;
+        _resetResultsLocally();
+      });
+      unawaited(_persistState());
+      return;
+    }
+
+    final run = ++searchRun;
+    if (aggregatedSearch) {
+      await _searchAggregated(run, keyword);
+      return;
+    }
+
+    final source = selectedSource?.search;
+    if (source == null) {
+      setState(() {
+        isSearching = false;
+      });
       return;
     }
 
@@ -296,6 +344,7 @@ class _SearchPageState extends State<SearchPage> {
       isSearching = true;
       searchError = null;
       results = const <PluginComic>[];
+      aggregateResults = const <_AggregateSearchResult>[];
       currentPage = 1;
       maxPage = null;
       nextToken = null;
@@ -304,9 +353,17 @@ class _SearchPageState extends State<SearchPage> {
 
     try {
       if (source.loadPage != null) {
-        final response = await source.loadPage!(keyword, 1, optionValues);
+        final response = await source
+            .loadPage!(keyword, 1, optionValues)
+            .timeout(
+              aggregateSourceTimeout,
+              onTimeout: () => throw TimeoutException(l10n.searchTimeout),
+            );
         if (response.isError) {
           throw StateError(response.errorMessage!);
+        }
+        if (!mounted || run != searchRun) {
+          return;
         }
         setState(() {
           results = response.data;
@@ -314,9 +371,17 @@ class _SearchPageState extends State<SearchPage> {
           currentPage = 1;
         });
       } else if (source.loadNext != null) {
-        final response = await source.loadNext!(keyword, null, optionValues);
+        final response = await source
+            .loadNext!(keyword, null, optionValues)
+            .timeout(
+              aggregateSourceTimeout,
+              onTimeout: () => throw TimeoutException(l10n.searchTimeout),
+            );
         if (response.isError) {
           throw StateError(response.errorMessage!);
+        }
+        if (!mounted || run != searchRun) {
+          return;
         }
         setState(() {
           results = response.data;
@@ -324,17 +389,117 @@ class _SearchPageState extends State<SearchPage> {
         });
       }
     } catch (error) {
+      if (!mounted || run != searchRun) {
+        return;
+      }
       setState(() {
-        searchError = error.toString();
+        searchError = _searchErrorMessage(error, l10n);
       });
     } finally {
-      if (mounted) {
+      if (mounted && run == searchRun) {
         setState(() {
           isSearching = false;
         });
       }
       unawaited(_persistState());
     }
+  }
+
+  Future<void> _searchAggregated(int run, String keyword) async {
+    final l10n = AppLocalizations.of(context);
+    final sources = _searchSources;
+    if (sources.isEmpty) {
+      setState(() {
+        isSearching = false;
+      });
+      return;
+    }
+
+    setState(() {
+      isSearching = true;
+      searchError = null;
+      results = const <PluginComic>[];
+      aggregateResults = [
+        for (final source in sources)
+          _AggregateSearchResult.loading(source: source),
+      ];
+      currentPage = 1;
+      maxPage = null;
+      nextToken = null;
+      lastKeyword = keyword;
+    });
+
+    await Future.wait(
+      sources.indexed.map((entry) async {
+        final index = entry.$1;
+        final source = entry.$2;
+        final search = source.search;
+        if (search == null) {
+          return;
+        }
+
+        try {
+          final response = switch (search) {
+            PluginSearchCapability(loadPage: final loadPage?) =>
+              await loadPage(keyword, 1, _defaultOptionsFor(source)).timeout(
+                aggregateSourceTimeout,
+                onTimeout: () => throw TimeoutException(l10n.searchTimeout),
+              ),
+            PluginSearchCapability(loadNext: final loadNext?) =>
+              await loadNext(keyword, null, _defaultOptionsFor(source)).timeout(
+                aggregateSourceTimeout,
+                onTimeout: () => throw TimeoutException(l10n.searchTimeout),
+              ),
+            _ => throw StateError(l10n.searchLoaderMissing),
+          };
+          if (response.isError) {
+            throw StateError(response.errorMessage ?? 'Unknown error');
+          }
+          _updateAggregateResult(
+            run: run,
+            index: index,
+            next: _AggregateSearchResult.loaded(
+              source: source,
+              comics: response.data,
+            ),
+          );
+        } catch (error) {
+          _updateAggregateResult(
+            run: run,
+            index: index,
+            next: _AggregateSearchResult.error(
+              source: source,
+              error: _searchErrorMessage(error, l10n),
+            ),
+          );
+        }
+      }),
+    );
+
+    if (!mounted || run != searchRun) {
+      return;
+    }
+    setState(() {
+      isSearching = false;
+    });
+    unawaited(_persistState());
+  }
+
+  void _updateAggregateResult({
+    required int run,
+    required int index,
+    required _AggregateSearchResult next,
+  }) {
+    if (!mounted || run != searchRun) {
+      return;
+    }
+    setState(() {
+      final updated = List<_AggregateSearchResult>.from(aggregateResults);
+      if (index >= 0 && index < updated.length) {
+        updated[index] = next;
+        aggregateResults = updated;
+      }
+    });
   }
 
   Future<void> _loadMore() async {
@@ -393,7 +558,9 @@ class _SearchPageState extends State<SearchPage> {
   }
 
   void _resetResults() {
+    searchRun++;
     setState(() {
+      isSearching = false;
       _resetResultsLocally();
       searchError = null;
       keywordController.clear();
@@ -404,6 +571,7 @@ class _SearchPageState extends State<SearchPage> {
 
   void _resetResultsLocally() {
     results = const <PluginComic>[];
+    aggregateResults = const <_AggregateSearchResult>[];
     currentPage = 1;
     maxPage = null;
     nextToken = null;
@@ -451,6 +619,7 @@ class _SearchPageState extends State<SearchPage> {
 
     keywordController.text = state['keyword']?.toString() ?? '';
     lastKeyword = state['lastKeyword']?.toString() ?? keywordController.text;
+    aggregatedSearch = state['aggregatedSearch'] == true;
     currentPage = (state['currentPage'] as num?)?.toInt() ?? 1;
     maxPage = (state['maxPage'] as num?)?.toInt();
     nextToken = state['nextToken']?.toString();
@@ -477,6 +646,7 @@ class _SearchPageState extends State<SearchPage> {
   Future<void> _persistState() {
     return appState.setSection('search.page', <String, dynamic>{
       'selectedSourceKey': selectedSource?.key,
+      'aggregatedSearch': aggregatedSearch,
       'keyword': keywordController.text,
       'lastKeyword': lastKeyword,
       'optionValues': optionValues,
@@ -564,6 +734,376 @@ class _SearchPageState extends State<SearchPage> {
     setState(() {
       searchFormExpanded = value;
     });
+  }
+
+  bool get _hasSearchResults {
+    return aggregatedSearch ? aggregateResults.isNotEmpty : results.isNotEmpty;
+  }
+
+  void _openComic(PluginComic comic) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => ComicDetailsPage(comic: comic),
+      ),
+    );
+  }
+
+  String _searchErrorMessage(Object error, AppLocalizations l10n) {
+    if (error is TimeoutException) {
+      return error.message ?? l10n.searchTimeout;
+    }
+    if (error is StateError) {
+      return error.message;
+    }
+    return error.toString();
+  }
+}
+
+class _AggregateSearchResult {
+  const _AggregateSearchResult({
+    required this.source,
+    required this.comics,
+    required this.isLoading,
+    this.error,
+  });
+
+  factory _AggregateSearchResult.loading({required PluginSource source}) {
+    return _AggregateSearchResult(
+      source: source,
+      comics: const <PluginComic>[],
+      isLoading: true,
+    );
+  }
+
+  factory _AggregateSearchResult.loaded({
+    required PluginSource source,
+    required List<PluginComic> comics,
+  }) {
+    return _AggregateSearchResult(
+      source: source,
+      comics: comics,
+      isLoading: false,
+    );
+  }
+
+  factory _AggregateSearchResult.error({
+    required PluginSource source,
+    required String error,
+  }) {
+    return _AggregateSearchResult(
+      source: source,
+      comics: const <PluginComic>[],
+      isLoading: false,
+      error: error,
+    );
+  }
+
+  final PluginSource source;
+  final List<PluginComic> comics;
+  final bool isLoading;
+  final String? error;
+}
+
+class _AggregateSearchResultsView extends StatelessWidget {
+  const _AggregateSearchResultsView({
+    required this.results,
+    required this.onTap,
+  });
+
+  static const double _coverWidth = 98;
+  static const double _coverHeight = 136;
+  static const double _tileWidth = 112;
+  static const double _rowHeight = 170;
+
+  final List<_AggregateSearchResult> results;
+  final ValueChanged<PluginComic> onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final result in results)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 22),
+            child: _AggregateSourceSection(result: result, onTap: onTap),
+          ),
+      ],
+    );
+  }
+}
+
+class _AggregateSourceSection extends StatelessWidget {
+  const _AggregateSourceSection({required this.result, required this.onTap});
+
+  final _AggregateSearchResult result;
+  final ValueChanged<PluginComic> onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          result.source.name,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: theme.textTheme.headlineSmall?.copyWith(
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        const SizedBox(height: 14),
+        if (result.isLoading)
+          const _AggregateLoadingRow()
+        else if (result.error != null || result.comics.isEmpty)
+          _AggregateEmptyRow(message: result.error ?? l10n.searchNoResults)
+        else
+          SizedBox(
+            height: _AggregateSearchResultsView._rowHeight,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              physics: const BouncingScrollPhysics(),
+              clipBehavior: Clip.none,
+              itemCount: result.comics.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 14),
+              itemBuilder: (context, index) {
+                final comic = result.comics[index];
+                return _AggregateComicTile(
+                  comic: comic,
+                  onTap: () => onTap(comic),
+                );
+              },
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _AggregateLoadingRow extends StatelessWidget {
+  const _AggregateLoadingRow();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return SizedBox(
+      height: _AggregateSearchResultsView._rowHeight,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        physics: const NeverScrollableScrollPhysics(),
+        itemCount: 6,
+        separatorBuilder: (_, _) => const SizedBox(width: 14),
+        itemBuilder: (context, index) {
+          return Column(
+            children: [
+              Container(
+                width: _AggregateSearchResultsView._coverWidth,
+                height: _AggregateSearchResultsView._coverHeight,
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surfaceContainerHighest.withValues(
+                    alpha: 0.52,
+                  ),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Container(
+                width: 82,
+                height: 12,
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surfaceContainerHighest.withValues(
+                    alpha: 0.48,
+                  ),
+                  borderRadius: BorderRadius.circular(99),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _AggregateEmptyRow extends StatelessWidget {
+  const _AggregateEmptyRow({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return SizedBox(
+      height: _AggregateSearchResultsView._rowHeight,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.info_outline, color: theme.colorScheme.onSurfaceVariant),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              message,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AggregateComicTile extends StatelessWidget {
+  const _AggregateComicTile({required this.comic, required this.onTap});
+
+  final PluginComic comic;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return SizedBox(
+      width: _AggregateSearchResultsView._tileWidth,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: onTap,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: _AggregateSearchResultsView._coverWidth,
+              height: _AggregateSearchResultsView._coverHeight,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: _AggregateComicCover(
+                  sourceKey: comic.sourceKey,
+                  imageUrl: comic.cover,
+                ),
+              ),
+            ),
+            const SizedBox(height: 6),
+            SizedBox(
+              width: _AggregateSearchResultsView._coverWidth,
+              child: Text(
+                comic.title.replaceAll('\n', ' '),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodyMedium,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AggregateComicCover extends StatefulWidget {
+  const _AggregateComicCover({required this.sourceKey, required this.imageUrl});
+
+  final String sourceKey;
+  final String imageUrl;
+
+  @override
+  State<_AggregateComicCover> createState() => _AggregateComicCoverState();
+}
+
+class _AggregateComicCoverState extends State<_AggregateComicCover> {
+  static final Map<String, Future<Uint8List>> _thumbnailCache =
+      <String, Future<Uint8List>>{};
+
+  late Future<Uint8List> imageFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    imageFuture = _loadImage();
+  }
+
+  @override
+  void didUpdateWidget(covariant _AggregateComicCover oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.sourceKey != widget.sourceKey ||
+        oldWidget.imageUrl != widget.imageUrl) {
+      imageFuture = _loadImage();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Container(
+      color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
+      child: widget.imageUrl.trim().isEmpty
+          ? const _AggregateCoverFallback(icon: Icons.image_not_supported)
+          : FutureBuilder<Uint8List>(
+              future: imageFuture,
+              builder: (context, snapshot) {
+                if (snapshot.hasData) {
+                  return Image.memory(snapshot.data!, fit: BoxFit.cover);
+                }
+                if (snapshot.hasError) {
+                  return Image.network(
+                    widget.imageUrl,
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) {
+                      return const _AggregateCoverFallback(
+                        icon: Icons.broken_image_outlined,
+                      );
+                    },
+                  );
+                }
+                return const Center(
+                  child: SizedBox.square(
+                    dimension: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                );
+              },
+            ),
+    );
+  }
+
+  Future<Uint8List> _loadImage() {
+    final key = '${widget.sourceKey}|${widget.imageUrl}';
+    return _thumbnailCache.putIfAbsent(key, () async {
+      final source = PluginRuntimeController.instance.find(widget.sourceKey);
+      if (source == null) {
+        throw StateError('Missing source for thumbnail loading.');
+      }
+      return PluginImageLoader.instance.loadThumbnail(
+        source: source,
+        imageUrl: widget.imageUrl,
+      );
+    });
+  }
+}
+
+class _AggregateCoverFallback extends StatelessWidget {
+  const _AggregateCoverFallback({required this.icon});
+
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Icon(
+        icon,
+        size: 32,
+        color: Theme.of(context).colorScheme.onSurfaceVariant,
+      ),
+    );
   }
 }
 
