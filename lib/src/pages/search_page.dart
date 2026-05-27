@@ -353,8 +353,7 @@ class _SearchPageState extends State<SearchPage> {
 
     try {
       if (source.loadPage != null) {
-        final response = await source
-            .loadPage!(keyword, 1, optionValues)
+        final response = await source.loadPage!(keyword, 1, optionValues)
             .timeout(
               aggregateSourceTimeout,
               onTimeout: () => throw TimeoutException(l10n.searchTimeout),
@@ -371,8 +370,7 @@ class _SearchPageState extends State<SearchPage> {
           currentPage = 1;
         });
       } else if (source.loadNext != null) {
-        final response = await source
-            .loadNext!(keyword, null, optionValues)
+        final response = await source.loadNext!(keyword, null, optionValues)
             .timeout(
               aggregateSourceTimeout,
               onTimeout: () => throw TimeoutException(l10n.searchTimeout),
@@ -833,11 +831,25 @@ class _AggregateSearchResultsView extends StatelessWidget {
   }
 }
 
-class _AggregateSourceSection extends StatelessWidget {
+class _AggregateSourceSection extends StatefulWidget {
   const _AggregateSourceSection({required this.result, required this.onTap});
 
   final _AggregateSearchResult result;
   final ValueChanged<PluginComic> onTap;
+
+  @override
+  State<_AggregateSourceSection> createState() =>
+      _AggregateSourceSectionState();
+}
+
+class _AggregateSourceSectionState extends State<_AggregateSourceSection> {
+  final scrollController = ScrollController();
+
+  @override
+  void dispose() {
+    scrollController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -848,7 +860,7 @@ class _AggregateSourceSection extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          result.source.name,
+          widget.result.source.name,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: theme.textTheme.headlineSmall?.copyWith(
@@ -856,26 +868,34 @@ class _AggregateSourceSection extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 14),
-        if (result.isLoading)
+        if (widget.result.isLoading)
           const _AggregateLoadingRow()
-        else if (result.error != null || result.comics.isEmpty)
-          _AggregateEmptyRow(message: result.error ?? l10n.searchNoResults)
+        else if (widget.result.error != null || widget.result.comics.isEmpty)
+          _AggregateEmptyRow(
+            message: widget.result.error ?? l10n.searchNoResults,
+          )
         else
           SizedBox(
-            height: _AggregateSearchResultsView._rowHeight,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              physics: const BouncingScrollPhysics(),
-              clipBehavior: Clip.none,
-              itemCount: result.comics.length,
-              separatorBuilder: (_, _) => const SizedBox(width: 14),
-              itemBuilder: (context, index) {
-                final comic = result.comics[index];
-                return _AggregateComicTile(
-                  comic: comic,
-                  onTap: () => onTap(comic),
-                );
-              },
+            height: _AggregateSearchResultsView._rowHeight + 16,
+            child: Scrollbar(
+              controller: scrollController,
+              thumbVisibility: true,
+              interactive: true,
+              child: ListView.separated(
+                controller: scrollController,
+                scrollDirection: Axis.horizontal,
+                physics: const BouncingScrollPhysics(),
+                clipBehavior: Clip.none,
+                itemCount: widget.result.comics.length,
+                separatorBuilder: (_, _) => const SizedBox(width: 14),
+                itemBuilder: (context, index) {
+                  final comic = widget.result.comics[index];
+                  return _AggregateComicTile(
+                    comic: comic,
+                    onTap: () => widget.onTap(comic),
+                  );
+                },
+              ),
             ),
           ),
       ],
