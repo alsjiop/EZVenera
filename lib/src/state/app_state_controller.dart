@@ -63,6 +63,16 @@ class AppStateController extends ChangeNotifier {
     return <String, dynamic>{};
   }
 
+  Map<String, dynamic> toBackupJson() {
+    return Map<String, dynamic>.from(_state);
+  }
+
+  Future<void> restoreFromBackupJson(Map<String, dynamic> value) async {
+    _state = Map<String, dynamic>.from(value);
+    await _persist();
+    notifyListeners();
+  }
+
   Future<void> setInt(String key, int value) async {
     _state[key] = value;
     await _persist();

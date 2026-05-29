@@ -1,0 +1,100 @@
+name: Build Artifacts
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    name: Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build release APK
+        run: flutter build apk --release
+
+      - name: Collect APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(grep '^version:' pubspec.yaml | awk '{print $2}' | cut -d+ -f1)"
+          mkdir -p pack
+          cp build/app/outputs/flutter-apk/app-release.apk "pack/EZVenera-${version}-android-release.apk"
+          sha256sum "pack/EZVenera-${version}-android-release.apk" > "pack/EZVenera-${version}-android-release.apk.sha256"
+
+      - name: Upload Android artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ezvenera-android
+          path: |
+            pack/*.apk
+            pack/*.sha256
+
+  windows:
+    name: Windows Setup
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install NSIS
+        shell: powershell
+        run: choco install nsis -y --no-progress
+
+      - name: Install dependencies
+        shell: powershell
+        run: flutter pub get
+
+      - name: Build Windows setup
+        shell: powershell
+        run: |
+          $projectRoot = (Get-Location).Path
+          $outputRoot = Join-Path $projectRoot 'pack'
+          .\scripts\build_release.ps1 `
+            -ProjectRoot $projectRoot `
+            -OutputRoot $outputRoot `
+            -NsisPath 'C:\Program Files (x86)\NSIS\makensis.exe' `
+            -SkipAndroid
+
+      - name: Hash Windows setup
+        shell: powershell
+        run: |
+          Get-ChildItem -Path pack -Filter '*.exe' | ForEach-Object {
+            $hash = Get-FileHash -Path $_.FullName -Algorithm SHA256
+            "$($hash.Hash)  $($_.Name)" | Set-Content -Path "$($_.FullName).sha256"
+          }
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ezvenera-windows
+          path: |
+            pack/*.exe
+            pack/*.sha256

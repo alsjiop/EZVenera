@@ -49,6 +49,31 @@ class HistoryController extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> mergeEntries(List<ReadingHistoryEntry> entries) async {
+    await initialize();
+    final merged = <String, ReadingHistoryEntry>{
+      for (final entry in _entries) entry.key: entry,
+    };
+    for (final entry in entries) {
+      final current = merged[entry.key];
+      if (current == null || entry.timestamp.isAfter(current.timestamp)) {
+        merged[entry.key] = entry;
+      }
+    }
+    _entries = merged.values.toList()
+      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    await _persist();
+    notifyListeners();
+  }
+
+  Future<void> replaceEntries(List<ReadingHistoryEntry> entries) async {
+    await initialize();
+    _entries = entries.toList()
+      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    await _persist();
+    notifyListeners();
+  }
+
   Future<void> _persist() {
     return _store.writeList(_entries.map((entry) => entry.toJson()).toList());
   }

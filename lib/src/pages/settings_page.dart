@@ -10,6 +10,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../backup/backup_service.dart';
 import '../downloads/download_controller.dart';
 import '../library/history_controller.dart';
 import '../localization/app_localizations.dart';
@@ -60,9 +61,7 @@ class _SettingsPageState extends State<SettingsPage> {
         children: [
           _SettingsHero(
             title: l10n.isChinese ? '设置' : 'Settings',
-            subtitle: l10n.isChinese
-                ? '浏览设置项'
-                : 'Begin to Settings',
+            subtitle: l10n.isChinese ? '浏览设置项' : 'Begin to Settings',
           ),
           const SizedBox(height: 20),
           _SettingsMenuCard(
@@ -91,7 +90,8 @@ class _SettingsPageState extends State<SettingsPage> {
           const SizedBox(height: 14),
           _SettingsMenuCard(
             title: l10n.settingsDownloads,
-            subtitle: downloadPath ??
+            subtitle:
+                downloadPath ??
                 l10n.settingsDownloadedComicsCount(
                   DownloadController.instance.downloads.length,
                 ),
@@ -105,6 +105,15 @@ class _SettingsPageState extends State<SettingsPage> {
                 '${_formatBytes(cacheSizeBytes)} 路 ${l10n.settingsInstalledSourcesCount(PluginRuntimeController.instance.sources.length)}',
             icon: Icons.apps_outlined,
             onTap: () => _openSection(context, const _AppSettingsPage()),
+          ),
+          const SizedBox(height: 14),
+          _SettingsMenuCard(
+            title: l10n.isChinese ? '备份与恢复' : 'Backup & Restore',
+            subtitle: l10n.isChinese
+                ? 'WebDAV 同步、导入和导出数据'
+                : 'WebDAV sync, import, and export data',
+            icon: Icons.backup_outlined,
+            onTap: () => _openSection(context, const _BackupSettingsPage()),
           ),
           const SizedBox(height: 14),
           _SettingsMenuCard(
@@ -231,7 +240,8 @@ class _AppearanceSettingsPage extends StatefulWidget {
   const _AppearanceSettingsPage();
 
   @override
-  State<_AppearanceSettingsPage> createState() => _AppearanceSettingsPageState();
+  State<_AppearanceSettingsPage> createState() =>
+      _AppearanceSettingsPageState();
 }
 
 class _AppearanceSettingsPageState extends State<_AppearanceSettingsPage> {
@@ -832,6 +842,350 @@ class _AppSettingsPageState extends State<_AppSettingsPage> {
   }
 }
 
+class _BackupSettingsPage extends StatefulWidget {
+  const _BackupSettingsPage();
+
+  @override
+  State<_BackupSettingsPage> createState() => _BackupSettingsPageState();
+}
+
+class _BackupSettingsPageState extends State<_BackupSettingsPage> {
+  final controller = SettingsController.instance;
+  late final TextEditingController urlController = TextEditingController(
+    text: controller.webDavUrl,
+  );
+  late final TextEditingController usernameController = TextEditingController(
+    text: controller.webDavUsername,
+  );
+  late final TextEditingController passwordController = TextEditingController(
+    text: controller.webDavPassword,
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    controller.addListener(_handleChange);
+  }
+
+  @override
+  void dispose() {
+    controller.removeListener(_handleChange);
+    urlController.dispose();
+    usernameController.dispose();
+    passwordController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+
+    return _SettingsSectionScaffold(
+      title: _text(l10n, '备份与恢复', 'Backup & Restore'),
+      child: ListView(
+        padding: const EdgeInsets.all(24),
+        children: [
+          _SettingsGroup(
+            title: _text(l10n, '数据同步', 'Data Sync'),
+            icon: Icons.cloud_sync_outlined,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                child: Column(
+                  children: [
+                    TextField(
+                      controller: urlController,
+                      decoration: InputDecoration(
+                        border: const OutlineInputBorder(),
+                        labelText: _text(l10n, 'WebDAV 地址', 'WebDAV URL'),
+                        hintText: 'https://example.com/dav/ezvenera/',
+                      ),
+                      keyboardType: TextInputType.url,
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: usernameController,
+                      decoration: InputDecoration(
+                        border: const OutlineInputBorder(),
+                        labelText: _text(l10n, '账号', 'Username'),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: passwordController,
+                      decoration: InputDecoration(
+                        border: const OutlineInputBorder(),
+                        labelText: _text(l10n, '密码', 'Password'),
+                      ),
+                      obscureText: true,
+                    ),
+                    const SizedBox(height: 12),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          FilledButton.icon(
+                            onPressed: _saveWebDavConfig,
+                            icon: const Icon(Icons.save_outlined),
+                            label: Text(l10n.save),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: _uploadWebDav,
+                            icon: const Icon(Icons.cloud_upload_outlined),
+                            label: Text(_text(l10n, '上传', 'Upload')),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: _downloadWebDav,
+                            icon: const Icon(Icons.cloud_download_outlined),
+                            label: Text(_text(l10n, '下载并恢复', 'Download')),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          _SettingsGroup(
+            title: _text(l10n, '导出数据', 'Export Data'),
+            icon: Icons.file_upload_outlined,
+            children: [
+              ListTile(
+                title: Text(
+                  _text(l10n, '导出 .ezvenera 文件', 'Export .ezvenera file'),
+                ),
+                subtitle: Text(
+                  _text(
+                    l10n,
+                    '包含设置、收藏、历史、图源、图源数据和 Cookie。',
+                    'Includes settings, favorites, history, sources, source data, and cookies.',
+                  ),
+                ),
+                trailing: const Icon(Icons.save_alt_outlined),
+                onTap: _exportBackup,
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          _SettingsGroup(
+            title: _text(l10n, '导入数据', 'Import Data'),
+            icon: Icons.file_download_outlined,
+            children: [
+              ListTile(
+                title: Text(_text(l10n, '导入备份文件', 'Import backup file')),
+                subtitle: Text(
+                  _text(
+                    l10n,
+                    '支持 EZVenera .ezvenera 与 Venera .venera 文件。',
+                    'Supports EZVenera .ezvenera and Venera .venera files.',
+                  ),
+                ),
+                trailing: const Icon(Icons.file_open_outlined),
+                onTap: _importBackup,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _saveWebDavConfig() async {
+    final l10n = AppLocalizations.of(context);
+    await controller.setWebDavConfig(
+      url: urlController.text,
+      username: usernameController.text,
+      password: passwordController.text,
+    );
+    if (!mounted) {
+      return;
+    }
+    _showSettingsMessage(
+      context,
+      _text(l10n, 'WebDAV 配置已保存。', 'WebDAV configuration saved.'),
+    );
+  }
+
+  Future<void> _uploadWebDav() async {
+    final l10n = AppLocalizations.of(context);
+    final navigator = Navigator.of(context, rootNavigator: true);
+    try {
+      await _saveWebDavConfig();
+      await _runBusyDialog(navigator, () async {
+        await BackupService.instance.uploadToWebDav(
+          url: urlController.text,
+          username: usernameController.text,
+          password: passwordController.text,
+        );
+      });
+      if (!mounted) {
+        return;
+      }
+      _showSettingsMessage(context, _text(l10n, '备份已上传。', 'Backup uploaded.'));
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      _showSettingsMessage(
+        context,
+        _text(l10n, '上传失败：$error', 'Upload failed: $error'),
+      );
+    }
+  }
+
+  Future<void> _downloadWebDav() async {
+    final l10n = AppLocalizations.of(context);
+    final navigator = Navigator.of(context, rootNavigator: true);
+    try {
+      await _saveWebDavConfig();
+      late BackupImportReport report;
+      await _runBusyDialog(navigator, () async {
+        report = await BackupService.instance.downloadLatestFromWebDav(
+          url: urlController.text,
+          username: usernameController.text,
+          password: passwordController.text,
+        );
+      });
+      if (!mounted) {
+        return;
+      }
+      _showSettingsMessage(context, _reportMessage(l10n, report));
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      _showSettingsMessage(
+        context,
+        _text(l10n, '下载失败：$error', 'Download failed: $error'),
+      );
+    }
+  }
+
+  Future<void> _exportBackup() async {
+    final l10n = AppLocalizations.of(context);
+    final location = await getSaveLocation(
+      acceptedTypeGroups: const <XTypeGroup>[
+        XTypeGroup(label: 'EZVenera Backup', extensions: <String>['ezvenera']),
+      ],
+      suggestedName: 'EZVenera.ezvenera',
+    );
+    if (location == null) {
+      return;
+    }
+    if (!mounted) {
+      return;
+    }
+    final navigator = Navigator.of(context, rootNavigator: true);
+    try {
+      await _runBusyDialog(navigator, () {
+        return BackupService.instance.exportToPath(location.path);
+      });
+      if (!mounted) {
+        return;
+      }
+      _showSettingsMessage(context, _text(l10n, '备份已导出。', 'Backup exported.'));
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      _showSettingsMessage(
+        context,
+        _text(l10n, '导出失败：$error', 'Export failed: $error'),
+      );
+    }
+  }
+
+  Future<void> _importBackup() async {
+    final l10n = AppLocalizations.of(context);
+    final file = await openFile(
+      acceptedTypeGroups: const <XTypeGroup>[
+        XTypeGroup(
+          label: 'Venera Backup',
+          extensions: <String>['ezvenera', 'venera'],
+        ),
+      ],
+    );
+    if (file == null) {
+      return;
+    }
+    if (!mounted) {
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(_text(l10n, '导入数据', 'Import Data')),
+          content: Text(
+            _text(
+              l10n,
+              '.ezvenera 会恢复 EZVenera 备份；.venera 会合并导入 Venera 的图源、收藏、历史和 Cookie。',
+              '.ezvenera restores an EZVenera backup; .venera merges Venera sources, favorites, history, and cookies.',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: Text(l10n.cancel),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(_text(l10n, '导入', 'Import')),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true) {
+      return;
+    }
+    if (!mounted) {
+      return;
+    }
+
+    final navigator = Navigator.of(context, rootNavigator: true);
+    try {
+      late BackupImportReport report;
+      await _runBusyDialog(navigator, () async {
+        report = await BackupService.instance.importFromPath(file.path);
+      });
+      if (!mounted) {
+        return;
+      }
+      _showSettingsMessage(context, _reportMessage(l10n, report));
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      _showSettingsMessage(
+        context,
+        _text(l10n, '导入失败：$error', 'Import failed: $error'),
+      );
+    }
+  }
+
+  void _handleChange() {
+    if (!mounted) {
+      return;
+    }
+    if (urlController.text != controller.webDavUrl) {
+      urlController.text = controller.webDavUrl;
+    }
+    if (usernameController.text != controller.webDavUsername) {
+      usernameController.text = controller.webDavUsername;
+    }
+    if (passwordController.text != controller.webDavPassword) {
+      passwordController.text = controller.webDavPassword;
+    }
+    setState(() {});
+  }
+}
+
 class _AboutSettingsPage extends StatefulWidget {
   const _AboutSettingsPage();
 
@@ -1190,10 +1544,7 @@ class _AboutSettingsPageState extends State<_AboutSettingsPage> {
           );
         }
         final l10n = AppLocalizations.of(context);
-        _showSettingsMessage(
-          context,
-          l10n.settingsInstallFailed(path),
-        );
+        _showSettingsMessage(context, l10n.settingsInstallFailed(path));
         return;
       }
       await Future<void>.delayed(const Duration(milliseconds: 1200));
@@ -1231,10 +1582,7 @@ class _AboutSettingsPageState extends State<_AboutSettingsPage> {
 }
 
 class _SettingsSectionScaffold extends StatelessWidget {
-  const _SettingsSectionScaffold({
-    required this.title,
-    required this.child,
-  });
+  const _SettingsSectionScaffold({required this.title, required this.child});
 
   final String title;
   final Widget child;
@@ -1325,10 +1673,7 @@ class _SettingsMenuCard extends StatelessWidget {
                   color: theme.colorScheme.primaryContainer,
                   borderRadius: BorderRadius.circular(14),
                 ),
-                child: Icon(
-                  icon,
-                  color: theme.colorScheme.onPrimaryContainer,
-                ),
+                child: Icon(icon, color: theme.colorScheme.onPrimaryContainer),
               ),
               const SizedBox(width: 14),
               Expanded(
@@ -1536,9 +1881,19 @@ void _showSettingsMessage(BuildContext context, String message) {
   if (!context.mounted) {
     return;
   }
-  ScaffoldMessenger.of(
-    context,
-  ).showSnackBar(SnackBar(content: Text(message)));
+  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+}
+
+String _text(AppLocalizations l10n, String zh, String en) {
+  return l10n.isChinese ? zh : en;
+}
+
+String _reportMessage(AppLocalizations l10n, BackupImportReport report) {
+  if (l10n.isChinese) {
+    return '完成：图源 ${report.sources}，收藏 ${report.favorites}，历史 ${report.history}，Cookie ${report.cookies}。';
+  }
+  return 'Done: ${report.sources} source(s), ${report.favorites} favorite(s), '
+      '${report.history} history item(s), ${report.cookies} cookie(s).';
 }
 
 Future<void> _openDirectory(BuildContext context, String path) async {

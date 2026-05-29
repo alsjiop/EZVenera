@@ -62,6 +62,28 @@ class FavoriteController extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> mergeEntries(List<LocalFavoriteEntry> entries) async {
+    await initialize();
+    final merged = <String, LocalFavoriteEntry>{
+      for (final entry in _entries) entry.key: entry,
+    };
+    for (final entry in entries) {
+      merged[entry.key] = entry;
+    }
+    _entries = merged.values.toList()
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    await _persist();
+    notifyListeners();
+  }
+
+  Future<void> replaceEntries(List<LocalFavoriteEntry> entries) async {
+    await initialize();
+    _entries = entries.toList()
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    await _persist();
+    notifyListeners();
+  }
+
   Future<void> _persist() {
     return _store.writeList(_entries.map((entry) => entry.toJson()).toList());
   }

@@ -44,6 +44,57 @@ class PluginCookieStore {
     }
   }
 
+  List<Map<String, dynamic>> exportRows() {
+    final rows = _db.select('''
+      SELECT name, value, domain, path, expires, secure, http_only
+      FROM cookies;
+    ''');
+    return rows
+        .map(
+          (row) => <String, dynamic>{
+            'name': row['name'],
+            'value': row['value'],
+            'domain': row['domain'],
+            'path': row['path'],
+            'expires': row['expires'],
+            'secure': row['secure'],
+            'http_only': row['http_only'],
+          },
+        )
+        .toList();
+  }
+
+  void replaceRows(List<Map<String, dynamic>> rows) {
+    _db.execute('DELETE FROM cookies;');
+    mergeRows(rows);
+  }
+
+  void mergeRows(List<Map<String, dynamic>> rows) {
+    for (final row in rows) {
+      final name = row['name']?.toString();
+      final value = row['value']?.toString();
+      final domain = row['domain']?.toString();
+      if (name == null || value == null || domain == null) {
+        continue;
+      }
+      _db.execute(
+        '''
+        INSERT OR REPLACE INTO cookies (name, value, domain, path, expires, secure, http_only)
+        VALUES (?, ?, ?, ?, ?, ?, ?);
+      ''',
+        [
+          name,
+          value,
+          domain,
+          row['path']?.toString() ?? '/',
+          (row['expires'] as num?)?.toInt(),
+          _intFlag(row['secure']),
+          _intFlag(row['http_only'] ?? row['httpOnly']),
+        ],
+      );
+    }
+  }
+
   void saveFromSetCookieHeaders(Uri uri, List<String> headers) {
     final cookies = <Cookie>[];
     for (final header in headers) {
@@ -140,6 +191,13 @@ class PluginCookieStore {
       return requestPath.startsWith(cookiePath);
     }
     return requestPath.startsWith(cookiePath);
+  }
+
+  int _intFlag(Object? value) {
+    if (value == true || value == 1) {
+      return 1;
+    }
+    return 0;
   }
 }
 

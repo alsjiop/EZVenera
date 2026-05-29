@@ -18,7 +18,11 @@ enum ComicDisplayMode { grid, list }
 ///   (Japanese manga).
 /// * [continuousTopToBottom] - vertical paging with top-to-bottom flow
 ///   (webtoons).
-enum ReaderPageMode { galleryLeftToRight, galleryRightToLeft, continuousTopToBottom }
+enum ReaderPageMode {
+  galleryLeftToRight,
+  galleryRightToLeft,
+  continuousTopToBottom,
+}
 
 class SettingsController extends ChangeNotifier {
   SettingsController._();
@@ -47,6 +51,9 @@ class SettingsController extends ChangeNotifier {
   AppThemePreset _themePreset = AppThemePreset.teal;
   String? _downloadDirectoryPath;
   String? _readerCacheDirectoryPath;
+  String _webDavUrl = '';
+  String _webDavUsername = '';
+  String _webDavPassword = '';
   int _readerCacheLimitMb = 512;
   File? _file;
 
@@ -68,6 +75,10 @@ class SettingsController extends ChangeNotifier {
   AppThemePreset get themePreset => _themePreset;
   String? get downloadDirectoryPath => _downloadDirectoryPath;
   String? get readerCacheDirectoryPath => _readerCacheDirectoryPath;
+  String get webDavUrl => _webDavUrl;
+  String get webDavUsername => _webDavUsername;
+  String get webDavPassword => _webDavPassword;
+  bool get hasWebDavConfig => _webDavUrl.trim().isNotEmpty;
   int get readerCacheLimitMb => _readerCacheLimitMb;
   Locale? get locale => switch (_language) {
     AppLanguageOption.system => null,
@@ -118,8 +129,7 @@ class SettingsController extends ChangeNotifier {
         _readerPageMode = _parseReaderPageMode(
           decoded['readerPageMode']?.toString(),
         );
-        _readerEnableVolumeKeys =
-            decoded['readerEnableVolumeKeys'] != false;
+        _readerEnableVolumeKeys = decoded['readerEnableVolumeKeys'] != false;
         _readerHorizontalContinuous =
             decoded['readerHorizontalContinuous'] == true;
         _comicDisplayMode = _parseComicDisplayMode(
@@ -134,6 +144,9 @@ class SettingsController extends ChangeNotifier {
         _readerCacheDirectoryPath = _normalizeDirectoryPath(
           decoded['readerCacheDirectoryPath']?.toString(),
         );
+        _webDavUrl = decoded['webDavUrl']?.toString() ?? '';
+        _webDavUsername = decoded['webDavUsername']?.toString() ?? '';
+        _webDavPassword = decoded['webDavPassword']?.toString() ?? '';
         _readerCacheLimitMb = _parseCacheLimitMb(
           (decoded['readerCacheLimitMb'] as num?)?.toInt(),
         );
@@ -325,6 +338,92 @@ class SettingsController extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> setWebDavConfig({
+    required String url,
+    required String username,
+    required String password,
+  }) async {
+    final normalizedUrl = url.trim();
+    final normalizedUsername = username.trim();
+    if (_webDavUrl == normalizedUrl &&
+        _webDavUsername == normalizedUsername &&
+        _webDavPassword == password) {
+      return;
+    }
+    _webDavUrl = normalizedUrl;
+    _webDavUsername = normalizedUsername;
+    _webDavPassword = password;
+    await _persist();
+    notifyListeners();
+  }
+
+  Map<String, dynamic> toBackupJson() {
+    return <String, dynamic>{
+      'themeMode': _themeMode.name,
+      'sourceIndexUrl': _sourceIndexUrl,
+      'readerShowTapGuide': _readerShowTapGuide,
+      'readerPrefetchCount': _readerPrefetchCount,
+      'readerEnableTapToTurnPages': _readerEnableTapToTurnPages,
+      'readerReverseTapToTurnPages': _readerReverseTapToTurnPages,
+      'readerEnableDoubleTapZoom': _readerEnableDoubleTapZoom,
+      'readerEnablePageAnimation': _readerEnablePageAnimation,
+      'readerAutoPageIntervalSeconds': _readerAutoPageIntervalSeconds,
+      'readerPageMode': _readerPageMode.name,
+      'readerEnableVolumeKeys': _readerEnableVolumeKeys,
+      'readerHorizontalContinuous': _readerHorizontalContinuous,
+      'comicDisplayMode': _comicDisplayMode.name,
+      'downloadSaveCover': _downloadSaveCover,
+      'language': _language.name,
+      'themePreset': _themePreset.name,
+      'downloadDirectoryPath': _downloadDirectoryPath,
+      'readerCacheDirectoryPath': _readerCacheDirectoryPath,
+      'readerCacheLimitMb': _readerCacheLimitMb,
+      'webDavUrl': _webDavUrl,
+      'webDavUsername': _webDavUsername,
+      'webDavPassword': _webDavPassword,
+    };
+  }
+
+  Future<void> restoreFromBackupJson(Map<String, dynamic> json) async {
+    _themeMode = _parseThemeMode(json['themeMode']?.toString());
+    _sourceIndexUrl =
+        json['sourceIndexUrl']?.toString() ?? defaultSourceIndexUrl;
+    _readerShowTapGuide = json['readerShowTapGuide'] != false;
+    _readerPrefetchCount = _parsePrefetchCount(
+      (json['readerPrefetchCount'] as num?)?.toInt(),
+    );
+    _readerEnableTapToTurnPages = json['readerEnableTapToTurnPages'] != false;
+    _readerReverseTapToTurnPages = json['readerReverseTapToTurnPages'] == true;
+    _readerEnableDoubleTapZoom = json['readerEnableDoubleTapZoom'] != false;
+    _readerEnablePageAnimation = json['readerEnablePageAnimation'] != false;
+    _readerAutoPageIntervalSeconds = _parseAutoPageIntervalSeconds(
+      (json['readerAutoPageIntervalSeconds'] as num?)?.toDouble(),
+    );
+    _readerPageMode = _parseReaderPageMode(json['readerPageMode']?.toString());
+    _readerEnableVolumeKeys = json['readerEnableVolumeKeys'] != false;
+    _readerHorizontalContinuous = json['readerHorizontalContinuous'] == true;
+    _comicDisplayMode = _parseComicDisplayMode(
+      json['comicDisplayMode']?.toString(),
+    );
+    _downloadSaveCover = json['downloadSaveCover'] != false;
+    _language = _parseLanguage(json['language']?.toString());
+    _themePreset = _parseThemePreset(json['themePreset']?.toString());
+    _downloadDirectoryPath = _normalizeDirectoryPath(
+      json['downloadDirectoryPath']?.toString(),
+    );
+    _readerCacheDirectoryPath = _normalizeDirectoryPath(
+      json['readerCacheDirectoryPath']?.toString(),
+    );
+    _readerCacheLimitMb = _parseCacheLimitMb(
+      (json['readerCacheLimitMb'] as num?)?.toInt(),
+    );
+    _webDavUrl = json['webDavUrl']?.toString() ?? '';
+    _webDavUsername = json['webDavUsername']?.toString() ?? '';
+    _webDavPassword = json['webDavPassword']?.toString() ?? '';
+    await _persist();
+    notifyListeners();
+  }
+
   Future<void> reset() async {
     _themeMode = ThemeMode.system;
     _sourceIndexUrl = defaultSourceIndexUrl;
@@ -344,6 +443,9 @@ class SettingsController extends ChangeNotifier {
     _themePreset = AppThemePreset.teal;
     _downloadDirectoryPath = null;
     _readerCacheDirectoryPath = null;
+    _webDavUrl = '';
+    _webDavUsername = '';
+    _webDavPassword = '';
     _readerCacheLimitMb = 512;
     await _persist();
     notifyListeners();
@@ -371,6 +473,9 @@ class SettingsController extends ChangeNotifier {
         'downloadDirectoryPath': _downloadDirectoryPath,
         'readerCacheDirectoryPath': _readerCacheDirectoryPath,
         'readerCacheLimitMb': _readerCacheLimitMb,
+        'webDavUrl': _webDavUrl,
+        'webDavUsername': _webDavUsername,
+        'webDavPassword': _webDavPassword,
       }),
     );
   }
