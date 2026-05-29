@@ -62,12 +62,12 @@ jobs:
             exit 1
           fi
           echo "${ANDROID_KEYSTORE_BASE64}" | base64 --decode > android/app/release-keystore.jks
-          cat > android/key.properties <<EOF
-storePassword=${ANDROID_KEYSTORE_PASSWORD}
-keyPassword=${ANDROID_KEY_PASSWORD}
-keyAlias=${ANDROID_KEY_ALIAS}
-storeFile=release-keystore.jks
-EOF
+          {
+            printf 'storePassword=%s\n' "${ANDROID_KEYSTORE_PASSWORD}"
+            printf 'keyPassword=%s\n' "${ANDROID_KEY_PASSWORD}"
+            printf 'keyAlias=%s\n' "${ANDROID_KEY_ALIAS}"
+            printf 'storeFile=release-keystore.jks\n'
+          } > android/key.properties
 
       - name: Install dependencies
         run: flutter pub get
