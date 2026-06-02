@@ -1,13 +1,35 @@
+import 'dart:async';
 import 'dart:io';
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'src/app.dart';
+import 'src/logging/app_logger.dart';
 import 'src/state/app_state_controller.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  try {
+    await AppLogger.instance.initialize();
+  } catch (_) {
+    // The app should still start if the diagnostics log cannot be opened.
+  }
+  FlutterError.onError = (details) {
+    FlutterError.presentError(details);
+    unawaited(
+      AppLogger.instance.error(
+        'Flutter error',
+        details.exception,
+        details.stack,
+      ),
+    );
+  };
+  PlatformDispatcher.instance.onError = (error, stackTrace) {
+    unawaited(AppLogger.instance.error('Platform error', error, stackTrace));
+    return false;
+  };
   if (Platform.isWindows) {
     await windowManager.ensureInitialized();
     await AppStateController.instance.initialize();

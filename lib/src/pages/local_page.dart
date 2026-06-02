@@ -1,9 +1,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../downloads/download_controller.dart';
 import '../downloads/download_models.dart';
@@ -19,6 +17,7 @@ import '../plugin_runtime/plugin_runtime_controller.dart';
 import '../plugin_runtime/services/plugin_image_loader.dart';
 import '../settings/settings_controller.dart';
 import '../state/app_state_controller.dart';
+import '../utils/platform_directory.dart';
 import '../widgets/comic_display_toggle.dart';
 import 'comic_details_page.dart';
 import 'network_resume_page.dart';
@@ -567,7 +566,7 @@ class _LocalPageState extends State<LocalPage> {
   Future<void> _addFolder() async {
     final l10n = AppLocalizations.of(context);
     try {
-      final selected = await getDirectoryPath();
+      final selected = await PlatformDirectory.pickDirectory();
       if (selected == null || selected.trim().isEmpty) {
         return;
       }
@@ -631,14 +630,7 @@ class _LocalPageState extends State<LocalPage> {
   Future<void> _openDirectory(String path) async {
     final l10n = AppLocalizations.of(context);
     try {
-      if (Platform.isWindows) {
-        await Process.start('explorer.exe', [path]);
-        return;
-      }
-      final opened = await launchUrl(
-        Uri.directory(path),
-        mode: LaunchMode.externalApplication,
-      );
+      final opened = await PlatformDirectory.openDirectory(path);
       if (!opened) {
         throw StateError('open failed');
       }

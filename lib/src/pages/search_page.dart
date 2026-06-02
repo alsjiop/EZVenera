@@ -27,6 +27,7 @@ class _SearchPageState extends State<SearchPage> {
   final appState = AppStateController.instance;
   final keywordController = TextEditingController();
   final keywordFocusNode = FocusNode();
+  final scrollController = ScrollController();
 
   PluginSource? selectedSource;
   List<PluginComic> results = const <PluginComic>[];
@@ -34,6 +35,7 @@ class _SearchPageState extends State<SearchPage> {
   List<_AggregateSearchResult> aggregateResults =
       const <_AggregateSearchResult>[];
   bool isSearching = false;
+  bool isLoadingMore = false;
   String? searchError;
   int currentPage = 1;
   int? maxPage;
@@ -60,6 +62,7 @@ class _SearchPageState extends State<SearchPage> {
     keywordFocusNode.removeListener(_onKeywordFocusChanged);
     keywordController.dispose();
     keywordFocusNode.dispose();
+    scrollController.dispose();
     super.dispose();
   }
 
@@ -72,6 +75,7 @@ class _SearchPageState extends State<SearchPage> {
     return SafeArea(
       child: ListView(
         key: const PageStorageKey<String>('search-page-list'),
+        controller: scrollController,
         padding: const EdgeInsets.all(24),
         children: [
           if (searchSources.isEmpty)
@@ -111,9 +115,14 @@ class _SearchPageState extends State<SearchPage> {
               Align(
                 alignment: Alignment.centerLeft,
                 child: OutlinedButton.icon(
-                  onPressed: isSearching ? null : _loadMore,
-                  icon: const Icon(Icons.expand_more),
-                  label: const Text('Load More'),
+                  onPressed: isSearching || isLoadingMore ? null : _loadMore,
+                  icon: isLoadingMore
+                      ? const SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.expand_more),
+                  label: Text(isLoadingMore ? 'Loading...' : 'Load More'),
                 ),
               ),
           ],
@@ -128,11 +137,6 @@ class _SearchPageState extends State<SearchPage> {
     return TapRegion(
       onTapOutside: (_) {
         keywordFocusNode.unfocus();
-        if (mounted) {
-          setState(() {
-            searchFormExpanded = false;
-          });
-        }
       },
       child: Card(
         child: AnimatedContainer(
@@ -161,6 +165,7 @@ class _SearchPageState extends State<SearchPage> {
                         searchRun++;
                         setState(() {
                           isSearching = false;
+                          isLoadingMore = false;
                           aggregatedSearch = value;
                           _resetResultsLocally();
                           searchError = null;
@@ -202,9 +207,17 @@ class _SearchPageState extends State<SearchPage> {
                   hintText: l10n.searchKeywordHint,
                   suffixIcon: AnimatedSwitcher(
                     duration: const Duration(milliseconds: 180),
-                    child: searchFormExpanded
-                        ? const Icon(Icons.unfold_less, key: ValueKey('less'))
-                        : const Icon(Icons.unfold_more, key: ValueKey('more')),
+                    child: IconButton(
+                      key: ValueKey(searchFormExpanded),
+                      icon: Icon(
+                        searchFormExpanded
+                            ? Icons.unfold_less
+                            : Icons.unfold_more,
+                      ),
+                      onPressed: () {
+                        _setSearchFormExpanded(!searchFormExpanded);
+                      },
+                    ),
                   ),
                 ),
                 onTap: () => _setSearchFormExpanded(true),
@@ -281,7 +294,7 @@ class _SearchPageState extends State<SearchPage> {
       return false;
     }
     final source = selectedSource?.search;
-    if (source == null || results.isEmpty || isSearching) {
+    if (source == null || results.isEmpty) {
       return false;
     }
     if (source.loadPage != null) {
@@ -319,6 +332,7 @@ class _SearchPageState extends State<SearchPage> {
       searchRun++;
       setState(() {
         isSearching = false;
+        isLoadingMore = false;
         searchError = null;
         _resetResultsLocally();
       });
@@ -342,6 +356,7 @@ class _SearchPageState extends State<SearchPage> {
 
     setState(() {
       isSearching = true;
+      isLoadingMore = false;
       searchError = null;
       results = const <PluginComic>[];
       aggregateResults = const <_AggregateSearchResult>[];
@@ -409,12 +424,14 @@ class _SearchPageState extends State<SearchPage> {
     if (sources.isEmpty) {
       setState(() {
         isSearching = false;
+        isLoadingMore = false;
       });
       return;
     }
 
     setState(() {
       isSearching = true;
+      isLoadingMore = false;
       searchError = null;
       results = const <PluginComic>[];
       aggregateResults = [
@@ -502,14 +519,17 @@ class _SearchPageState extends State<SearchPage> {
 
   Future<void> _loadMore() async {
     final source = selectedSource?.search;
-    if (source == null || isSearching) {
+    if (source == null || isSearching || isLoadingMore) {
       return;
     }
 
+    FocusManager.instance.primaryFocus?.unfocus();
+    final scrollOffset = _currentScrollOffset();
     setState(() {
-      isSearching = true;
+      isLoadingMore = true;
       searchError = null;
     });
+    _restoreScrollOffset(scrollOffset);
 
     try {
       if (source.loadPage != null) {
@@ -527,6 +547,7 @@ class _SearchPageState extends State<SearchPage> {
           currentPage = nextPage;
           maxPage = (response.subData as num?)?.toInt() ?? maxPage;
         });
+        _restoreScrollOffset(scrollOffset);
       } else if (source.loadNext != null) {
         final response = await source.loadNext!(
           lastKeyword,
@@ -540,6 +561,7 @@ class _SearchPageState extends State<SearchPage> {
           results = [...results, ...response.data];
           nextToken = response.subData?.toString();
         });
+        _restoreScrollOffset(scrollOffset);
       }
     } catch (error) {
       setState(() {
@@ -548,17 +570,41 @@ class _SearchPageState extends State<SearchPage> {
     } finally {
       if (mounted) {
         setState(() {
-          isSearching = false;
+          isLoadingMore = false;
         });
+        _restoreScrollOffset(scrollOffset);
       }
       unawaited(_persistState());
     }
+  }
+
+  double _currentScrollOffset() {
+    if (!scrollController.hasClients) {
+      return 0;
+    }
+    return scrollController.offset;
+  }
+
+  void _restoreScrollOffset(double offset) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !scrollController.hasClients) {
+        return;
+      }
+      final position = scrollController.position;
+      final target = offset
+          .clamp(position.minScrollExtent, position.maxScrollExtent)
+          .toDouble();
+      if ((position.pixels - target).abs() > 0.5) {
+        scrollController.jumpTo(target);
+      }
+    });
   }
 
   void _resetResults() {
     searchRun++;
     setState(() {
       isSearching = false;
+      isLoadingMore = false;
       _resetResultsLocally();
       searchError = null;
       keywordController.clear();
@@ -570,6 +616,7 @@ class _SearchPageState extends State<SearchPage> {
   void _resetResultsLocally() {
     results = const <PluginComic>[];
     aggregateResults = const <_AggregateSearchResult>[];
+    isLoadingMore = false;
     currentPage = 1;
     maxPage = null;
     nextToken = null;

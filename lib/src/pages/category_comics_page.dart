@@ -34,6 +34,7 @@ class _CategoryComicsPageState extends State<CategoryComicsPage> {
   List<String> optionValues = const <String>[];
   List<PluginComic> comics = const <PluginComic>[];
   bool isLoading = true;
+  bool isLoadingMore = false;
   String? error;
   int currentPage = 1;
   int? maxPage;
@@ -93,7 +94,7 @@ class _CategoryComicsPageState extends State<CategoryComicsPage> {
                 alignment: Alignment.topCenter,
                 heightFactor: _optionsVisible ? 1.0 : 0.0,
                 child: AnimatedOpacity(
-                  duration: const Duration(milliseconds: 200),
+                  duration: const Duration(milliseconds: 180),
                   opacity: _optionsVisible ? 1.0 : 0.0,
                   child: _buildOptions(),
                 ),
@@ -113,49 +114,35 @@ class _CategoryComicsPageState extends State<CategoryComicsPage> {
   }
 
   Widget _buildOptions() {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-      child: Column(
-        children: _options.indexed.map((entry) {
-          final index = entry.$1;
-          final option = entry.$2;
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (option.label.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Text(
-                      option.label,
-                      style: Theme.of(context).textTheme.titleSmall,
-                    ),
-                  ),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    for (final item in option.options.entries)
-                      FilterChip(
-                        selected: optionValues[index] == item.key,
-                        label: Text(item.value),
-                        onSelected: (_) {
-                          if (optionValues[index] == item.key) {
-                            return;
-                          }
-                          setState(() {
-                            optionValues[index] = item.key;
-                          });
-                          _loadPage(1, replace: true);
-                        },
-                      ),
-                  ],
-                ),
-              ],
-            ),
-          );
-        }).toList(),
+    final maxHeight = MediaQuery.sizeOf(context).height * 0.5;
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxHeight: maxHeight),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: _options.indexed.map((entry) {
+            final index = entry.$1;
+            final option = entry.$2;
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: _PagedCategoryOption(
+                option: option,
+                selectedValue: optionValues[index],
+                pageHeightLimit: maxHeight - 52,
+                onSelected: (value) {
+                  if (optionValues[index] == value) {
+                    return;
+                  }
+                  setState(() {
+                    optionValues[index] = value;
+                  });
+                  _loadPage(1, replace: true);
+                },
+              ),
+            );
+          }).toList(),
+        ),
       ),
     );
   }
@@ -215,9 +202,16 @@ class _CategoryComicsPageState extends State<CategoryComicsPage> {
             child: Padding(
               padding: const EdgeInsets.only(top: 12),
               child: OutlinedButton.icon(
-                onPressed: isLoading ? null : () => _loadPage(currentPage + 1),
-                icon: const Icon(Icons.expand_more),
-                label: const Text('Load More'),
+                onPressed: isLoading || isLoadingMore
+                    ? null
+                    : () => _loadPage(currentPage + 1),
+                icon: isLoadingMore
+                    ? const SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.expand_more),
+                label: Text(isLoadingMore ? 'Loading...' : 'Load More'),
               ),
             ),
           ),
@@ -226,7 +220,7 @@ class _CategoryComicsPageState extends State<CategoryComicsPage> {
   }
 
   bool get _canLoadMore {
-    if (isLoading || comics.isEmpty) {
+    if (comics.isEmpty) {
       return false;
     }
     if (isRanking) {
@@ -279,33 +273,45 @@ class _CategoryComicsPageState extends State<CategoryComicsPage> {
   List<PluginCategoryComicsOption> _filteredOptions(
     List<PluginCategoryComicsOption>? options,
   ) {
-    return (options ?? const <PluginCategoryComicsOption>[])
-        .where((option) {
-          if (option.options.isEmpty) {
-            return false;
-          }
-          final category = widget.categoryName ?? '';
-          if (option.notShowWhen.contains(category)) {
-            return false;
-          }
-          if (option.showWhen != null) {
-            return option.showWhen!.contains(category);
-          }
-          return true;
-        })
-        .toList();
+    return (options ?? const <PluginCategoryComicsOption>[]).where((option) {
+      if (option.options.isEmpty) {
+        return false;
+      }
+      final category = widget.categoryName ?? '';
+      if (option.notShowWhen.contains(category)) {
+        return false;
+      }
+      if (option.showWhen != null) {
+        return option.showWhen!.contains(category);
+      }
+      return true;
+    }).toList();
   }
 
   Future<void> _loadPage(int page, {bool replace = false}) async {
+    final preserveScrollOffset = !replace && comics.isNotEmpty;
+    final scrollOffset = preserveScrollOffset ? _currentScrollOffset() : 0.0;
+    if (preserveScrollOffset) {
+      FocusManager.instance.primaryFocus?.unfocus();
+    }
+
     setState(() {
-      isLoading = true;
+      if (preserveScrollOffset) {
+        isLoadingMore = true;
+      } else {
+        isLoading = true;
+      }
       if (replace) {
         error = null;
         currentPage = 1;
         maxPage = null;
         nextToken = null;
+        isLoadingMore = false;
       }
     });
+    if (preserveScrollOffset) {
+      _restoreScrollOffset(scrollOffset);
+    }
 
     try {
       final result = isRanking
@@ -333,6 +339,9 @@ class _CategoryComicsPageState extends State<CategoryComicsPage> {
           maxPage = (result.subData as num?)?.toInt();
         }
       });
+      if (preserveScrollOffset) {
+        _restoreScrollOffset(scrollOffset);
+      }
     } catch (err) {
       setState(() {
         error = err.toString();
@@ -340,10 +349,39 @@ class _CategoryComicsPageState extends State<CategoryComicsPage> {
     } finally {
       if (mounted) {
         setState(() {
-          isLoading = false;
+          if (preserveScrollOffset) {
+            isLoadingMore = false;
+          } else {
+            isLoading = false;
+          }
         });
+        if (preserveScrollOffset) {
+          _restoreScrollOffset(scrollOffset);
+        }
       }
     }
+  }
+
+  double _currentScrollOffset() {
+    if (!_scrollController.hasClients) {
+      return 0;
+    }
+    return _scrollController.offset;
+  }
+
+  void _restoreScrollOffset(double offset) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) {
+        return;
+      }
+      final position = _scrollController.position;
+      final target = offset
+          .clamp(position.minScrollExtent, position.maxScrollExtent)
+          .toDouble();
+      if ((position.pixels - target).abs() > 0.5) {
+        _scrollController.jumpTo(target);
+      }
+    });
   }
 
   Future<PluginResult<List<PluginComic>>> _loadRankingPage(
@@ -382,5 +420,170 @@ class _CategoryComicsPageState extends State<CategoryComicsPage> {
       );
     }
     return search.loadNext!(widget.searchKeyword!, null, const <String>[]);
+  }
+}
+
+class _PagedCategoryOption extends StatefulWidget {
+  const _PagedCategoryOption({
+    required this.option,
+    required this.selectedValue,
+    required this.pageHeightLimit,
+    required this.onSelected,
+  });
+
+  final PluginCategoryComicsOption option;
+  final String selectedValue;
+  final double pageHeightLimit;
+  final ValueChanged<String> onSelected;
+
+  @override
+  State<_PagedCategoryOption> createState() => _PagedCategoryOptionState();
+}
+
+class _PagedCategoryOptionState extends State<_PagedCategoryOption> {
+  late final PageController _pageController;
+  int _page = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _pageController = PageController();
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final entries = widget.option.options.entries.toList();
+    if (entries.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = _columnsForWidth(constraints.maxWidth);
+        final headerHeight = widget.option.label.isEmpty ? 0.0 : 30.0;
+        final pagerHeight = 40.0;
+        final rowHeight = 42.0;
+        final availableRows =
+            ((widget.pageHeightLimit - headerHeight - pagerHeight) / rowHeight)
+                .floor();
+        final rows = availableRows.clamp(1, 12);
+        final perPage = (columns * rows).clamp(1, entries.length);
+        final pages = (entries.length / perPage).ceil();
+        final currentPage = _page.clamp(0, pages - 1);
+        if (currentPage != _page) {
+          _page = currentPage;
+        }
+        final pageHeight = rows * rowHeight;
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (widget.option.label.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Text(
+                  widget.option.label,
+                  style: theme.textTheme.titleSmall,
+                ),
+              ),
+            SizedBox(
+              height: pageHeight,
+              child: PageView.builder(
+                controller: _pageController,
+                itemCount: pages,
+                onPageChanged: (value) {
+                  setState(() {
+                    _page = value;
+                  });
+                },
+                itemBuilder: (context, pageIndex) {
+                  final start = pageIndex * perPage;
+                  final end = (start + perPage).clamp(0, entries.length);
+                  return Align(
+                    alignment: Alignment.topLeft,
+                    child: Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (final item in entries.sublist(start, end))
+                          FilterChip(
+                            selected: widget.selectedValue == item.key,
+                            label: Text(item.value),
+                            onSelected: (_) => widget.onSelected(item.key),
+                          ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+            if (pages > 1)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    Text(
+                      '${currentPage + 1}/$pages',
+                      style: theme.textTheme.labelMedium?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton.outlined(
+                      visualDensity: VisualDensity.compact,
+                      onPressed: currentPage <= 0
+                          ? null
+                          : () => _animateToPage(currentPage - 1),
+                      icon: const Icon(Icons.chevron_left),
+                      tooltip: 'Previous',
+                    ),
+                    const SizedBox(width: 4),
+                    IconButton.outlined(
+                      visualDensity: VisualDensity.compact,
+                      onPressed: currentPage >= pages - 1
+                          ? null
+                          : () => _animateToPage(currentPage + 1),
+                      icon: const Icon(Icons.chevron_right),
+                      tooltip: 'Next',
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  int _columnsForWidth(double width) {
+    if (width >= 980) {
+      return 5;
+    }
+    if (width >= 760) {
+      return 4;
+    }
+    if (width >= 560) {
+      return 3;
+    }
+    if (width >= 420) {
+      return 2;
+    }
+    return 1;
+  }
+
+  void _animateToPage(int page) {
+    _pageController.animateToPage(
+      page,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+    );
   }
 }

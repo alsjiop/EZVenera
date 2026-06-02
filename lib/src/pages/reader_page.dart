@@ -81,6 +81,7 @@ class _ReaderPageState extends State<ReaderPage> {
   Timer? _pendingTapTimer;
   final Map<int, GlobalKey<_ReaderImageState>> _imageKeys =
       <int, GlobalKey<_ReaderImageState>>{};
+  final Map<int, double> _verticalPageHeights = <int, double>{};
 
   static const _doubleTapMaxDelay = Duration(milliseconds: 150);
   static const _doubleTapMaxDistanceSquared = 24.0 * 24.0;
@@ -94,6 +95,8 @@ class _ReaderPageState extends State<ReaderPage> {
   bool _longPressDragging = false;
   Offset _longPressZoomOffset = Offset.zero;
   Offset _longPressStartLocal = Offset.zero;
+  bool _isProgressDragging = false;
+  double? _progressDragPage;
 
   bool get _isPureLocalReader =>
       widget.localComic != null || widget.localLibraryComic != null;
@@ -269,6 +272,9 @@ class _ReaderPageState extends State<ReaderPage> {
   void _setCurrentPageFromScroll(int page) {
     final clamped = page.clamp(1, images.isEmpty ? 1 : images.length);
     if (clamped != currentPage) {
+      if (_isProgressDragging) {
+        return;
+      }
       currentPage = clamped;
       _recordHistory();
       _prefetchAround(currentPage);
@@ -508,13 +514,13 @@ class _ReaderPageState extends State<ReaderPage> {
                   right: 16,
                   bottom: _controlsVisible ? 16 : -148,
                   child: _ReaderBottomPanel(
-                    title: '$currentPage / ${images.length}',
-                    currentPage: currentPage,
+                    title:
+                        '${_displayedProgressPage.clamp(1, images.length)} / ${images.length}',
+                    currentPage: _displayedProgressPage,
                     pageCount: images.length,
-                    onChanged: (value) {
-                      final target = value.round().clamp(1, images.length);
-                      _moveToPage(target - 1);
-                    },
+                    onChangeStart: _handleProgressChangeStart,
+                    onChanged: _handleProgressChanged,
+                    onChangeEnd: _handleProgressChangeEnd,
                     onPrevChapter: _previousChapter,
                     onPrevPage: _goToPreviousPage,
                     onNextPage: _goToNextPage,
@@ -533,6 +539,62 @@ class _ReaderPageState extends State<ReaderPage> {
         },
       ),
     );
+  }
+
+  int get _displayedProgressPage {
+    final dragged = _progressDragPage;
+    if (dragged == null || images.isEmpty) {
+      return currentPage;
+    }
+    return dragged.round().clamp(1, images.length);
+  }
+
+  void _handleProgressChangeStart(double value) {
+    _pendingTapTimer?.cancel();
+    _pendingTapTimer = null;
+    _pendingTapDetails = null;
+    _stopLongPressZoom();
+    setState(() {
+      _isProgressDragging = true;
+      _progressDragPage = value;
+    });
+  }
+
+  void _handleProgressChanged(double value) {
+    if (!_isProgressDragging) {
+      _isProgressDragging = true;
+    }
+    setState(() {
+      _progressDragPage = value;
+    });
+  }
+
+  Future<void> _handleProgressChangeEnd(double value) async {
+    final target = value.round().clamp(1, images.length);
+    setState(() {
+      _isProgressDragging = false;
+      _progressDragPage = target.toDouble();
+      currentPage = target;
+      _isCurrentImageZoomed = false;
+    });
+    await _moveToPage(target - 1);
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _progressDragPage = null;
+    });
+    _recordHistory();
+    _prefetchAround(currentPage);
+  }
+
+  void _stopLongPressZoom() {
+    if (!_isLongPressZooming && !_longPressDragging) {
+      return;
+    }
+    _isLongPressZooming = false;
+    _longPressDragging = false;
+    _longPressZoomOffset = Offset.zero;
   }
 
   Widget _buildContinuousView({
@@ -570,6 +632,9 @@ class _ReaderPageState extends State<ReaderPage> {
           index: index + 1,
           isActive: index + 1 == currentPage,
           fitWidth: isVertical,
+          onSizeChanged: isVertical
+              ? (height) => _rememberVerticalPageHeight(index, height)
+              : null,
           onZoomChanged: (zoomed) {
             if (!mounted) return;
             if (_isCurrentImageZoomed != zoomed) {
@@ -777,6 +842,7 @@ class _ReaderPageState extends State<ReaderPage> {
       _scrollController?.dispose();
       _scrollController = null;
       _scrollControllerIsContinuous = false;
+      _verticalPageHeights.clear();
 
       final mode = SettingsController.instance.readerPageMode;
       final horizContinuous =
@@ -1114,18 +1180,7 @@ class _ReaderPageState extends State<ReaderPage> {
         images.isEmpty ? 0 : images.length - 1,
       );
       if (_isVerticalContinuousMode) {
-        final itemContext = _imageKeyFor(targetIndex).currentContext;
-        if (itemContext == null) {
-          return Future<void>.value();
-        }
-        return Scrollable.ensureVisible(
-          itemContext,
-          alignment: 0,
-          duration: SettingsController.instance.readerEnablePageAnimation
-              ? const Duration(milliseconds: 200)
-              : Duration.zero,
-          curve: Curves.easeOut,
-        );
+        return _moveToVerticalPage(targetIndex);
       }
       final sc = _scrollController;
       if (sc == null || !sc.hasClients || _continuousItemExtent <= 0) {
@@ -1156,6 +1211,87 @@ class _ReaderPageState extends State<ReaderPage> {
       duration: const Duration(milliseconds: 180),
       curve: Curves.easeOut,
     );
+  }
+
+  Future<void> _moveToVerticalPage(int targetIndex) async {
+    final sc = _scrollController;
+    if (sc == null || !sc.hasClients) {
+      return;
+    }
+
+    final itemContext = _imageKeyFor(targetIndex).currentContext;
+    if (itemContext != null) {
+      await Scrollable.ensureVisible(
+        itemContext,
+        alignment: 0,
+        duration: SettingsController.instance.readerEnablePageAnimation
+            ? const Duration(milliseconds: 200)
+            : Duration.zero,
+        curve: Curves.easeOut,
+      );
+      return;
+    }
+
+    final target = _estimatedVerticalOffsetFor(
+      targetIndex,
+    ).clamp(sc.position.minScrollExtent, sc.position.maxScrollExtent);
+    _suppressScrollListener = true;
+    if (SettingsController.instance.readerEnablePageAnimation) {
+      await sc.animateTo(
+        target,
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+      );
+    } else {
+      sc.jumpTo(target);
+    }
+    _suppressScrollListener = false;
+
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted) {
+      return;
+    }
+    final nextContext = _imageKeyFor(targetIndex).currentContext;
+    if (nextContext != null && nextContext.mounted) {
+      await Scrollable.ensureVisible(
+        nextContext,
+        alignment: 0,
+        duration: const Duration(milliseconds: 120),
+        curve: Curves.easeOut,
+      );
+    }
+  }
+
+  double _estimatedVerticalOffsetFor(int targetIndex) {
+    var offset = 0.0;
+    final fallbackHeight = _averageVerticalPageHeight();
+    for (var index = 0; index < targetIndex; index++) {
+      offset += _verticalPageHeights[index] ?? fallbackHeight;
+    }
+    return offset;
+  }
+
+  double _averageVerticalPageHeight() {
+    if (_verticalPageHeights.isEmpty) {
+      final height = MediaQuery.sizeOf(context).height;
+      return height <= 0 ? 720 : height;
+    }
+    final total = _verticalPageHeights.values.fold<double>(
+      0,
+      (sum, height) => sum + height,
+    );
+    return total / _verticalPageHeights.length;
+  }
+
+  void _rememberVerticalPageHeight(int index, double height) {
+    if (height <= 0) {
+      return;
+    }
+    final previous = _verticalPageHeights[index];
+    if (previous != null && (previous - height).abs() < 1) {
+      return;
+    }
+    _verticalPageHeights[index] = height;
   }
 
   GlobalKey<_ReaderImageState> _imageKeyFor(int index) {
@@ -1271,6 +1407,9 @@ class _ReaderPageState extends State<ReaderPage> {
   }
 
   void _handleLongPressStart(LongPressStartDetails details) {
+    if (_isProgressDragging || _controlsVisible) {
+      return;
+    }
     _longPressStartLocal = details.localPosition;
     _longPressZoomOffset = Offset.zero;
     _longPressDragging = false;
@@ -1595,6 +1734,7 @@ class _ReaderImage extends StatefulWidget {
     required this.index,
     required this.isActive,
     this.fitWidth = false,
+    this.onSizeChanged,
     this.onZoomChanged,
     super.key,
   });
@@ -1607,6 +1747,7 @@ class _ReaderImage extends StatefulWidget {
   final int index;
   final bool isActive;
   final bool fitWidth;
+  final ValueChanged<double>? onSizeChanged;
   final ValueChanged<bool>? onZoomChanged;
 
   @override
@@ -1702,12 +1843,15 @@ class _ReaderImageState extends State<_ReaderImage>
         }
 
         if (widget.fitWidth) {
-          return Image(
-            image: MemoryImage(snapshot.data!),
-            width: double.infinity,
-            fit: BoxFit.fitWidth,
-            gaplessPlayback: true,
-            filterQuality: FilterQuality.medium,
+          return _MeasuredReaderImage(
+            onSizeChanged: widget.onSizeChanged,
+            child: Image(
+              image: MemoryImage(snapshot.data!),
+              width: double.infinity,
+              fit: BoxFit.fitWidth,
+              gaplessPlayback: true,
+              filterQuality: FilterQuality.medium,
+            ),
           );
         }
 
@@ -1936,6 +2080,49 @@ class _ReaderError extends StatelessWidget {
   }
 }
 
+class _MeasuredReaderImage extends StatefulWidget {
+  const _MeasuredReaderImage({
+    required this.child,
+    required this.onSizeChanged,
+  });
+
+  final Widget child;
+  final ValueChanged<double>? onSizeChanged;
+
+  @override
+  State<_MeasuredReaderImage> createState() => _MeasuredReaderImageState();
+}
+
+class _MeasuredReaderImageState extends State<_MeasuredReaderImage> {
+  final GlobalKey _key = GlobalKey();
+  double? _lastHeight;
+
+  @override
+  Widget build(BuildContext context) {
+    _scheduleMeasure();
+    return KeyedSubtree(key: _key, child: widget.child);
+  }
+
+  void _scheduleMeasure() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      final renderObject = _key.currentContext?.findRenderObject();
+      if (renderObject is! RenderBox || !renderObject.hasSize) {
+        return;
+      }
+      final height = renderObject.size.height;
+      final previous = _lastHeight;
+      if (previous != null && (previous - height).abs() < 1) {
+        return;
+      }
+      _lastHeight = height;
+      widget.onSizeChanged?.call(height);
+    });
+  }
+}
+
 class _ChapterItem {
   const _ChapterItem({required this.id, required this.title, this.groupTitle});
 
@@ -2021,7 +2208,9 @@ class _ReaderBottomPanel extends StatelessWidget {
     required this.title,
     required this.currentPage,
     required this.pageCount,
+    required this.onChangeStart,
     required this.onChanged,
+    required this.onChangeEnd,
     required this.onPrevChapter,
     required this.onPrevPage,
     required this.onNextPage,
@@ -2037,7 +2226,9 @@ class _ReaderBottomPanel extends StatelessWidget {
   final String title;
   final int currentPage;
   final int pageCount;
+  final ValueChanged<double> onChangeStart;
   final ValueChanged<double> onChanged;
+  final ValueChanged<double> onChangeEnd;
   final VoidCallback onPrevChapter;
   final VoidCallback onPrevPage;
   final VoidCallback onNextPage;
@@ -2074,7 +2265,9 @@ class _ReaderBottomPanel extends StatelessWidget {
               min: 1,
               max: pageCount <= 1 ? 1 : pageCount.toDouble(),
               divisions: pageCount <= 1 ? 1 : pageCount - 1,
+              onChangeStart: pageCount <= 1 ? null : onChangeStart,
               onChanged: pageCount <= 1 ? null : onChanged,
+              onChangeEnd: pageCount <= 1 ? null : onChangeEnd,
             ),
             Row(
               children: [

@@ -170,14 +170,6 @@ class ReaderImageCache {
   }
 
   Future<Directory> _resolveRoot() async {
-    final custom = SettingsController.instance.readerCacheDirectoryPath;
-    if (custom != null && custom.isNotEmpty) {
-      final root = Directory(custom);
-      await root.create(recursive: true);
-      _cacheRoot = root;
-      return root;
-    }
-
     final supportDirectory = await getApplicationSupportDirectory();
     final root = Directory(p.join(supportDirectory.path, 'reader_cache'));
     await root.create(recursive: true);

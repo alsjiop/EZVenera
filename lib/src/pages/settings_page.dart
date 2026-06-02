@@ -14,9 +14,11 @@ import '../backup/backup_service.dart';
 import '../downloads/download_controller.dart';
 import '../library/history_controller.dart';
 import '../localization/app_localizations.dart';
+import '../logging/app_logger.dart';
 import '../plugin_runtime/plugin_runtime_controller.dart';
 import '../reader/reader_image_cache.dart';
 import '../settings/settings_controller.dart';
+import '../utils/platform_directory.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -105,6 +107,17 @@ class _SettingsPageState extends State<SettingsPage> {
                 '${_formatBytes(cacheSizeBytes)} 路 ${l10n.settingsInstalledSourcesCount(PluginRuntimeController.instance.sources.length)}',
             icon: Icons.apps_outlined,
             onTap: () => _openSection(context, const _AppSettingsPage()),
+          ),
+          const SizedBox(height: 14),
+          _SettingsMenuCard(
+            title: _text(l10n, '日志', 'Logs'),
+            subtitle: _text(
+              l10n,
+              '查看、复制或导出运行日志',
+              'View, copy, or export runtime logs',
+            ),
+            icon: Icons.receipt_long_outlined,
+            onTap: () => _openSection(context, const _LogSettingsPage()),
           ),
           const SizedBox(height: 14),
           _SettingsMenuCard(
@@ -549,7 +562,7 @@ class _DownloadsSettingsPageState extends State<_DownloadsSettingsPage> {
   Future<void> _pickDownloadDirectory() async {
     final l10n = AppLocalizations.of(context);
     try {
-      final selected = await getDirectoryPath();
+      final selected = await PlatformDirectory.pickDirectory();
       if (selected == null || selected.trim().isEmpty) {
         return;
       }
@@ -612,7 +625,6 @@ class _AppSettingsPage extends StatefulWidget {
 class _AppSettingsPageState extends State<_AppSettingsPage> {
   final controller = SettingsController.instance;
 
-  String? cachePath;
   int cacheSizeBytes = 0;
 
   @override
@@ -645,21 +657,6 @@ class _AppSettingsPageState extends State<_AppSettingsPage> {
             title: l10n.settingsApp,
             icon: Icons.apps_outlined,
             children: [
-              _PathSettingTile(
-                title: l10n.settingsReaderCacheDirectory,
-                subtitle: l10n.settingsReaderCacheDirectorySubtitle,
-                path: cachePath,
-                openLabel: l10n.settingsOpenFolder,
-                selectLabel: l10n.settingsSelectFolder,
-                defaultLabel: l10n.settingsUseDefaultPath,
-                onOpen: cachePath == null
-                    ? null
-                    : () => _openDirectory(context, cachePath!),
-                onSelect: _pickCacheDirectory,
-                onUseDefault: controller.readerCacheDirectoryPath == null
-                    ? null
-                    : _resetCacheDirectory,
-              ),
               ListTile(
                 title: Text(l10n.settingsCacheSize),
                 subtitle: Text(_formatBytes(cacheSizeBytes)),
@@ -728,64 +725,13 @@ class _AppSettingsPageState extends State<_AppSettingsPage> {
   }
 
   Future<void> _refreshStorageInfo() async {
-    final nextCachePath = await ReaderImageCache.instance.currentRootPath();
     final nextCacheSize = await ReaderImageCache.instance.diskUsageBytes();
     if (!mounted) {
       return;
     }
     setState(() {
-      cachePath = nextCachePath;
       cacheSizeBytes = nextCacheSize;
     });
-  }
-
-  Future<void> _pickCacheDirectory() async {
-    final l10n = AppLocalizations.of(context);
-    try {
-      final selected = await getDirectoryPath();
-      if (selected == null || selected.trim().isEmpty) {
-        return;
-      }
-      if (!mounted) {
-        return;
-      }
-      final navigator = Navigator.of(context, rootNavigator: true);
-      await _runBusyDialog(navigator, () async {
-        await controller.setReaderCacheDirectoryPath(selected);
-        await ReaderImageCache.instance.reloadConfiguration();
-        await _refreshStorageInfo();
-      });
-      if (!mounted) {
-        return;
-      }
-      _showSettingsMessage(context, l10n.settingsPathUpdated);
-    } catch (_) {
-      if (!mounted) {
-        return;
-      }
-      _showSettingsMessage(context, l10n.settingsSelectFolderFailed);
-    }
-  }
-
-  Future<void> _resetCacheDirectory() async {
-    final l10n = AppLocalizations.of(context);
-    try {
-      final navigator = Navigator.of(context, rootNavigator: true);
-      await _runBusyDialog(navigator, () async {
-        await controller.setReaderCacheDirectoryPath(null);
-        await ReaderImageCache.instance.reloadConfiguration();
-        await _refreshStorageInfo();
-      });
-      if (!mounted) {
-        return;
-      }
-      _showSettingsMessage(context, l10n.settingsPathUpdated);
-    } catch (_) {
-      if (!mounted) {
-        return;
-      }
-      _showSettingsMessage(context, l10n.settingsPathUpdateFailed);
-    }
   }
 
   Future<void> _clearReaderCache() async {
@@ -1581,6 +1527,216 @@ class _AboutSettingsPageState extends State<_AboutSettingsPage> {
   }
 }
 
+class _LogSettingsPage extends StatefulWidget {
+  const _LogSettingsPage();
+
+  @override
+  State<_LogSettingsPage> createState() => _LogSettingsPageState();
+}
+
+class _LogSettingsPageState extends State<_LogSettingsPage> {
+  String logText = '';
+  bool isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadLog());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+    final theme = Theme.of(context);
+    final displayText = logText.trim().isEmpty
+        ? _text(l10n, '暂无日志', 'No logs yet')
+        : logText;
+
+    return _SettingsSectionScaffold(
+      title: _text(l10n, '日志', 'Logs'),
+      child: ListView(
+        padding: const EdgeInsets.all(24),
+        children: [
+          _SettingsGroup(
+            title: _text(l10n, '日志', 'Logs'),
+            icon: Icons.receipt_long_outlined,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    FilledButton.icon(
+                      onPressed: isLoading ? null : _loadLog,
+                      icon: const Icon(Icons.refresh),
+                      label: Text(_text(l10n, '刷新', 'Refresh')),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: isLoading || logText.isEmpty ? null : _copyLog,
+                      icon: const Icon(Icons.copy_outlined),
+                      label: Text(_text(l10n, '复制', 'Copy')),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: isLoading ? null : _exportLog,
+                      icon: const Icon(Icons.ios_share_outlined),
+                      label: Text(_text(l10n, '导出', 'Export')),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: isLoading || logText.isEmpty
+                          ? null
+                          : _confirmClearLog,
+                      icon: const Icon(Icons.delete_outline),
+                      label: Text(_text(l10n, '清空', 'Clear')),
+                    ),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                child: Container(
+                  constraints: const BoxConstraints(minHeight: 360),
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.surfaceContainerHighest.withValues(
+                      alpha: 0.55,
+                    ),
+                    border: Border.all(color: theme.colorScheme.outlineVariant),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: isLoading
+                      ? const Center(child: CircularProgressIndicator())
+                      : SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: SelectableText(
+                            displayText,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              fontFamily: 'monospace',
+                              color: logText.trim().isEmpty
+                                  ? theme.colorScheme.onSurfaceVariant
+                                  : theme.colorScheme.onSurface,
+                            ),
+                          ),
+                        ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _loadLog() async {
+    setState(() {
+      isLoading = true;
+    });
+    try {
+      final nextText = await AppLogger.instance.read();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        logText = nextText;
+        isLoading = false;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        isLoading = false;
+      });
+      final l10n = AppLocalizations.of(context);
+      _showSettingsMessage(
+        context,
+        _text(l10n, '读取日志失败：$error', 'Failed to read log: $error'),
+      );
+    }
+  }
+
+  Future<void> _copyLog() async {
+    final l10n = AppLocalizations.of(context);
+    await Clipboard.setData(ClipboardData(text: logText));
+    if (!mounted) {
+      return;
+    }
+    _showSettingsMessage(context, _text(l10n, '日志已复制。', 'Log copied.'));
+  }
+
+  Future<void> _exportLog() async {
+    final l10n = AppLocalizations.of(context);
+    final location = await getSaveLocation(
+      acceptedTypeGroups: const <XTypeGroup>[
+        XTypeGroup(label: 'Log File', extensions: <String>['log']),
+      ],
+      suggestedName: 'EZVenera.log',
+    );
+    if (location == null) {
+      return;
+    }
+    try {
+      await AppLogger.instance.exportToPath(location.path);
+      if (!mounted) {
+        return;
+      }
+      _showSettingsMessage(context, _text(l10n, '日志已导出。', 'Log exported.'));
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      _showSettingsMessage(
+        context,
+        _text(l10n, '导出日志失败：$error', 'Failed to export log: $error'),
+      );
+    }
+  }
+
+  Future<void> _confirmClearLog() async {
+    final l10n = AppLocalizations.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(_text(l10n, '清空日志', 'Clear Logs')),
+          content: Text(
+            _text(l10n, '确认清空当前日志吗？', 'Clear the current log content?'),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: Text(l10n.cancel),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(_text(l10n, '清空', 'Clear')),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true) {
+      return;
+    }
+    try {
+      await AppLogger.instance.clear();
+      await _loadLog();
+      if (!mounted) {
+        return;
+      }
+      _showSettingsMessage(context, _text(l10n, '日志已清空。', 'Log cleared.'));
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      _showSettingsMessage(
+        context,
+        _text(l10n, '清空日志失败：$error', 'Failed to clear log: $error'),
+      );
+    }
+  }
+}
+
 class _SettingsSectionScaffold extends StatelessWidget {
   const _SettingsSectionScaffold({required this.title, required this.child});
 
@@ -1899,14 +2055,7 @@ String _reportMessage(AppLocalizations l10n, BackupImportReport report) {
 Future<void> _openDirectory(BuildContext context, String path) async {
   final l10n = AppLocalizations.of(context);
   try {
-    if (Platform.isWindows) {
-      await Process.start('explorer.exe', [path]);
-      return;
-    }
-    final opened = await launchUrl(
-      Uri.directory(path),
-      mode: LaunchMode.externalApplication,
-    );
+    final opened = await PlatformDirectory.openDirectory(path);
     if (!opened) {
       throw StateError('open failed');
     }
