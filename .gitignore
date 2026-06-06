@@ -47,3 +47,5 @@ app.*.map.json
 /android/app/*.jks
 /android/app/*.keystore
 /ACTION_RELEASE.md
+
+handoff.md
