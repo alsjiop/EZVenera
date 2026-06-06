@@ -210,6 +210,16 @@ class _ReaderSettingsPageState extends State<_ReaderSettingsPage> {
                 value: controller.readerShowTapGuide,
                 onChanged: controller.setReaderShowTapGuide,
               ),
+              SwitchListTile(
+                title: Text(l10n.isChinese ? '章节首尾按钮' : 'Chapter edge buttons'),
+                subtitle: Text(
+                  l10n.isChinese
+                      ? '在章节首页显示上一章，在页尾显示下一章。'
+                      : 'Show previous on the first page and next on the last page.',
+                ),
+                value: controller.readerShowChapterEdgeButtons,
+                onChanged: controller.setReaderShowChapterEdgeButtons,
+              ),
               ListTile(
                 title: Text(l10n.settingsPrefetchPages),
                 subtitle: Text(
@@ -701,6 +711,35 @@ class _AppSettingsPageState extends State<_AppSettingsPage> {
                   l10n.settingsInstalledSourcesCount(
                     PluginRuntimeController.instance.sources.length,
                   ),
+                ),
+              ),
+              ListTile(
+                title: Text(l10n.isChinese ? '搜索历史上限' : 'Search history limit'),
+                subtitle: Text(
+                  l10n.isChinese
+                      ? '最多保存 ${controller.searchHistoryLimit} 条搜索关键词。'
+                      : 'Keep up to ${controller.searchHistoryLimit} search keyword(s).',
+                ),
+                trailing: DropdownButton<int>(
+                  value: controller.searchHistoryLimit,
+                  underline: const SizedBox.shrink(),
+                  items: const [0, 10, 20, 30, 50, 100]
+                      .map(
+                        (value) => DropdownMenuItem<int>(
+                          value: value,
+                          child: Text(
+                            value == 0
+                                ? (l10n.isChinese ? '关闭' : 'Off')
+                                : '$value',
+                          ),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (value) {
+                    if (value != null) {
+                      controller.setSearchHistoryLimit(value);
+                    }
+                  },
                 ),
               ),
               ListTile(

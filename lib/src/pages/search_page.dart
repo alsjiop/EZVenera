@@ -8,6 +8,7 @@ import '../localization/app_localizations.dart';
 import '../plugin_runtime/models.dart';
 import '../plugin_runtime/plugin_runtime_controller.dart';
 import '../plugin_runtime/services/plugin_image_loader.dart';
+import '../settings/settings_controller.dart';
 import '../state/app_state_controller.dart';
 import '../widgets/comic_card_grid.dart';
 import '../widgets/comic_display_toggle.dart';
@@ -44,20 +45,25 @@ class _SearchPageState extends State<SearchPage> {
   bool searchFormExpanded = false;
   bool aggregatedSearch = false;
   int searchRun = 0;
+  List<String> searchHistory = const <String>[];
+  bool searchHistoryPointerActive = false;
 
   @override
   void initState() {
     super.initState();
     controller.addListener(_onControllerChanged);
+    SettingsController.instance.addListener(_onSettingsChanged);
     keywordController.addListener(_onKeywordChanged);
     keywordFocusNode.addListener(_onKeywordFocusChanged);
     _syncSelectedSource();
+    _restoreSearchHistory();
     _restoreState();
   }
 
   @override
   void dispose() {
     controller.removeListener(_onControllerChanged);
+    SettingsController.instance.removeListener(_onSettingsChanged);
     keywordController.removeListener(_onKeywordChanged);
     keywordFocusNode.removeListener(_onKeywordFocusChanged);
     keywordController.dispose();
@@ -223,6 +229,15 @@ class _SearchPageState extends State<SearchPage> {
                 onTap: () => _setSearchFormExpanded(true),
                 onSubmitted: (_) => _search(),
               ),
+              if (_shouldShowSearchHistory)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: _SearchHistoryDropdown(
+                    items: searchHistory,
+                    onPointerActiveChanged: _setSearchHistoryPointerActive,
+                    onSelected: _selectSearchHistory,
+                  ),
+                ),
               _AnimatedSearchSection(
                 expanded: searchFormExpanded,
                 child: Column(
@@ -303,6 +318,12 @@ class _SearchPageState extends State<SearchPage> {
     return source.loadNext != null && nextToken != null;
   }
 
+  bool get _shouldShowSearchHistory {
+    return (keywordFocusNode.hasFocus || searchHistoryPointerActive) &&
+        searchHistory.isNotEmpty &&
+        SettingsController.instance.searchHistoryLimit > 0;
+  }
+
   void _changeSource(String? sourceKey) {
     if (sourceKey == null) {
       return;
@@ -340,6 +361,7 @@ class _SearchPageState extends State<SearchPage> {
       return;
     }
 
+    await _rememberSearchKeyword(keyword);
     final run = ++searchRun;
     if (aggregatedSearch) {
       await _searchAggregated(run, keyword);
@@ -677,6 +699,64 @@ class _SearchPageState extends State<SearchPage> {
               .toList();
   }
 
+  void _restoreSearchHistory() {
+    final section = appState.getSection('search.history');
+    searchHistory = (section['items'] as List? ?? const <dynamic>[])
+        .map((item) => item.toString().trim())
+        .where((item) => item.isNotEmpty)
+        .toList();
+    searchHistory = _trimSearchHistory(searchHistory);
+  }
+
+  Future<void> _rememberSearchKeyword(String keyword) async {
+    final normalized = keyword.trim();
+    final limit = SettingsController.instance.searchHistoryLimit;
+    if (normalized.isEmpty || limit <= 0) {
+      return;
+    }
+
+    final updated = <String>[
+      normalized,
+      ...searchHistory.where((item) => item != normalized),
+    ];
+    final trimmed = _trimSearchHistory(updated);
+    setState(() {
+      searchHistory = trimmed;
+    });
+    await appState.setSection('search.history', <String, dynamic>{
+      'items': trimmed,
+    });
+  }
+
+  List<String> _trimSearchHistory(List<String> items) {
+    final limit = SettingsController.instance.searchHistoryLimit;
+    if (limit <= 0) {
+      return const <String>[];
+    }
+    return items.take(limit).toList();
+  }
+
+  void _selectSearchHistory(String keyword) {
+    setState(() {
+      searchHistoryPointerActive = false;
+      keywordController.text = keyword;
+      keywordController.selection = TextSelection.collapsed(
+        offset: keyword.length,
+      );
+    });
+    keywordFocusNode.unfocus();
+    unawaited(_search());
+  }
+
+  void _setSearchHistoryPointerActive(bool value) {
+    if (searchHistoryPointerActive == value) {
+      return;
+    }
+    setState(() {
+      searchHistoryPointerActive = value;
+    });
+  }
+
   List<String> _normalizeOptionValues(
     PluginSource source,
     List<String> candidateValues,
@@ -762,6 +842,25 @@ class _SearchPageState extends State<SearchPage> {
     unawaited(_persistState());
   }
 
+  void _onSettingsChanged() {
+    final trimmed = _trimSearchHistory(searchHistory);
+    if (trimmed.length == searchHistory.length) {
+      if (mounted) {
+        setState(() {});
+      }
+      return;
+    }
+    searchHistory = trimmed;
+    unawaited(
+      appState.setSection('search.history', <String, dynamic>{
+        'items': trimmed,
+      }),
+    );
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
   void _onKeywordChanged() {
     unawaited(_persistState());
   }
@@ -769,6 +868,11 @@ class _SearchPageState extends State<SearchPage> {
   void _onKeywordFocusChanged() {
     if (keywordFocusNode.hasFocus) {
       _setSearchFormExpanded(true);
+      if (mounted) {
+        setState(() {});
+      }
+    } else if (mounted && !searchHistoryPointerActive) {
+      setState(() {});
     }
   }
 
@@ -1169,6 +1273,105 @@ class _AggregateCoverFallback extends StatelessWidget {
         icon,
         size: 32,
         color: Theme.of(context).colorScheme.onSurfaceVariant,
+      ),
+    );
+  }
+}
+
+class _SearchHistoryDropdown extends StatefulWidget {
+  const _SearchHistoryDropdown({
+    required this.items,
+    required this.onPointerActiveChanged,
+    required this.onSelected,
+  });
+
+  final List<String> items;
+  final ValueChanged<bool> onPointerActiveChanged;
+  final ValueChanged<String> onSelected;
+
+  @override
+  State<_SearchHistoryDropdown> createState() => _SearchHistoryDropdownState();
+}
+
+class _SearchHistoryDropdownState extends State<_SearchHistoryDropdown> {
+  final ScrollController _controller = ScrollController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final visibleRows = widget.items.length.clamp(1, 5);
+    const rowHeight = 44.0;
+
+    return Listener(
+      onPointerDown: (_) => widget.onPointerActiveChanged(true),
+      onPointerUp: (_) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          widget.onPointerActiveChanged(false);
+        });
+      },
+      onPointerCancel: (_) => widget.onPointerActiveChanged(false),
+      child: Container(
+        height: visibleRows * rowHeight,
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerHighest.withValues(
+            alpha: 0.72,
+          ),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: theme.colorScheme.outlineVariant),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Scrollbar(
+          controller: _controller,
+          thumbVisibility: widget.items.length > 5,
+          child: ListView.builder(
+            controller: _controller,
+            padding: EdgeInsets.zero,
+            itemExtent: rowHeight,
+            itemCount: widget.items.length,
+            itemBuilder: (context, index) {
+              final item = widget.items[index];
+              return InkWell(
+                onTap: () => widget.onSelected(item),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.history,
+                        size: 18,
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          item,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      Icon(
+                        Icons.north_west,
+                        size: 16,
+                        color: theme.colorScheme.onSurfaceVariant.withValues(
+                          alpha: 0.72,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
       ),
     );
   }

@@ -45,7 +45,9 @@ class SettingsController extends ChangeNotifier {
   ReaderPageMode _readerPageMode = ReaderPageMode.galleryLeftToRight;
   bool _readerEnableVolumeKeys = true;
   bool _readerHorizontalContinuous = false;
+  bool _readerShowChapterEdgeButtons = true;
   ComicDisplayMode _comicDisplayMode = ComicDisplayMode.grid;
+  int _searchHistoryLimit = 30;
   bool _downloadSaveCover = true;
   AppLanguageOption _language = AppLanguageOption.system;
   AppThemePreset _themePreset = AppThemePreset.teal;
@@ -69,7 +71,9 @@ class SettingsController extends ChangeNotifier {
   ReaderPageMode get readerPageMode => _readerPageMode;
   bool get readerEnableVolumeKeys => _readerEnableVolumeKeys;
   bool get readerHorizontalContinuous => _readerHorizontalContinuous;
+  bool get readerShowChapterEdgeButtons => _readerShowChapterEdgeButtons;
   ComicDisplayMode get comicDisplayMode => _comicDisplayMode;
+  int get searchHistoryLimit => _searchHistoryLimit;
   bool get downloadSaveCover => _downloadSaveCover;
   AppLanguageOption get language => _language;
   AppThemePreset get themePreset => _themePreset;
@@ -132,8 +136,13 @@ class SettingsController extends ChangeNotifier {
         _readerEnableVolumeKeys = decoded['readerEnableVolumeKeys'] != false;
         _readerHorizontalContinuous =
             decoded['readerHorizontalContinuous'] == true;
+        _readerShowChapterEdgeButtons =
+            decoded['readerShowChapterEdgeButtons'] != false;
         _comicDisplayMode = _parseComicDisplayMode(
           decoded['comicDisplayMode']?.toString(),
+        );
+        _searchHistoryLimit = _parseSearchHistoryLimit(
+          (decoded['searchHistoryLimit'] as num?)?.toInt(),
         );
         _downloadSaveCover = decoded['downloadSaveCover'] != false;
         _language = _parseLanguage(decoded['language']?.toString());
@@ -272,11 +281,30 @@ class SettingsController extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> setReaderShowChapterEdgeButtons(bool value) async {
+    if (_readerShowChapterEdgeButtons == value) {
+      return;
+    }
+    _readerShowChapterEdgeButtons = value;
+    await _persist();
+    notifyListeners();
+  }
+
   Future<void> setComicDisplayMode(ComicDisplayMode value) async {
     if (_comicDisplayMode == value) {
       return;
     }
     _comicDisplayMode = value;
+    await _persist();
+    notifyListeners();
+  }
+
+  Future<void> setSearchHistoryLimit(int value) async {
+    final normalized = _parseSearchHistoryLimit(value);
+    if (_searchHistoryLimit == normalized) {
+      return;
+    }
+    _searchHistoryLimit = normalized;
     await _persist();
     notifyListeners();
   }
@@ -371,7 +399,9 @@ class SettingsController extends ChangeNotifier {
       'readerPageMode': _readerPageMode.name,
       'readerEnableVolumeKeys': _readerEnableVolumeKeys,
       'readerHorizontalContinuous': _readerHorizontalContinuous,
+      'readerShowChapterEdgeButtons': _readerShowChapterEdgeButtons,
       'comicDisplayMode': _comicDisplayMode.name,
+      'searchHistoryLimit': _searchHistoryLimit,
       'downloadSaveCover': _downloadSaveCover,
       'language': _language.name,
       'themePreset': _themePreset.name,
@@ -402,8 +432,13 @@ class SettingsController extends ChangeNotifier {
     _readerPageMode = _parseReaderPageMode(json['readerPageMode']?.toString());
     _readerEnableVolumeKeys = json['readerEnableVolumeKeys'] != false;
     _readerHorizontalContinuous = json['readerHorizontalContinuous'] == true;
+    _readerShowChapterEdgeButtons =
+        json['readerShowChapterEdgeButtons'] != false;
     _comicDisplayMode = _parseComicDisplayMode(
       json['comicDisplayMode']?.toString(),
+    );
+    _searchHistoryLimit = _parseSearchHistoryLimit(
+      (json['searchHistoryLimit'] as num?)?.toInt(),
     );
     _downloadSaveCover = json['downloadSaveCover'] != false;
     _language = _parseLanguage(json['language']?.toString());
@@ -437,7 +472,9 @@ class SettingsController extends ChangeNotifier {
     _readerPageMode = ReaderPageMode.galleryLeftToRight;
     _readerEnableVolumeKeys = true;
     _readerHorizontalContinuous = false;
+    _readerShowChapterEdgeButtons = true;
     _comicDisplayMode = ComicDisplayMode.grid;
+    _searchHistoryLimit = 30;
     _downloadSaveCover = true;
     _language = AppLanguageOption.system;
     _themePreset = AppThemePreset.teal;
@@ -466,7 +503,9 @@ class SettingsController extends ChangeNotifier {
         'readerPageMode': _readerPageMode.name,
         'readerEnableVolumeKeys': _readerEnableVolumeKeys,
         'readerHorizontalContinuous': _readerHorizontalContinuous,
+        'readerShowChapterEdgeButtons': _readerShowChapterEdgeButtons,
         'comicDisplayMode': _comicDisplayMode.name,
+        'searchHistoryLimit': _searchHistoryLimit,
         'downloadSaveCover': _downloadSaveCover,
         'language': _language.name,
         'themePreset': _themePreset.name,
@@ -540,6 +579,13 @@ class SettingsController extends ChangeNotifier {
       return 512;
     }
     return value.clamp(128, 4096);
+  }
+
+  int _parseSearchHistoryLimit(int? value) {
+    if (value == null) {
+      return 30;
+    }
+    return value.clamp(0, 100);
   }
 
   String? _normalizeDirectoryPath(String? value) {

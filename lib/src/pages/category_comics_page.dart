@@ -470,10 +470,20 @@ class _PagedCategoryOptionState extends State<_PagedCategoryOption> {
         final headerHeight = widget.option.label.isEmpty ? 0.0 : 30.0;
         final pagerHeight = 40.0;
         final rowHeight = 42.0;
-        final availableRows =
-            ((widget.pageHeightLimit - headerHeight - pagerHeight) / rowHeight)
-                .floor();
-        final rows = availableRows.clamp(1, 12);
+        final rowsWithoutPager =
+            ((widget.pageHeightLimit - headerHeight) / rowHeight).floor().clamp(
+              1,
+              12,
+            );
+        final neededRows = (entries.length / columns).ceil().clamp(1, 12);
+        final needsPager = neededRows > rowsWithoutPager;
+        final availableRows = needsPager
+            ? ((widget.pageHeightLimit - headerHeight - pagerHeight) /
+                      rowHeight)
+                  .floor()
+                  .clamp(1, 12)
+            : rowsWithoutPager;
+        final rows = needsPager ? availableRows : neededRows;
         final perPage = (columns * rows).clamp(1, entries.length);
         final pages = (entries.length / perPage).ceil();
         final currentPage = _page.clamp(0, pages - 1);

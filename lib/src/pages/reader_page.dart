@@ -97,6 +97,7 @@ class _ReaderPageState extends State<ReaderPage> {
   Offset _longPressStartLocal = Offset.zero;
   bool _isProgressDragging = false;
   double? _progressDragPage;
+  double _bottomPanelHeight = 0;
 
   bool get _isPureLocalReader =>
       widget.localComic != null || widget.localLibraryComic != null;
@@ -344,6 +345,8 @@ class _ReaderPageState extends State<ReaderPage> {
         volumeKeys: SettingsController.instance.readerEnableVolumeKeys,
         horizontalContinuous:
             SettingsController.instance.readerHorizontalContinuous,
+        chapterEdgeButtons:
+            SettingsController.instance.readerShowChapterEdgeButtons,
         onPageModeChanged: (value) async {
           await SettingsController.instance.setReaderPageMode(value);
           if (mounted) setState(() {});
@@ -354,6 +357,12 @@ class _ReaderPageState extends State<ReaderPage> {
         },
         onHorizontalContinuousChanged: (value) async {
           await SettingsController.instance.setReaderHorizontalContinuous(
+            value,
+          );
+          if (mounted) setState(() {});
+        },
+        onChapterEdgeButtonsChanged: (value) async {
+          await SettingsController.instance.setReaderShowChapterEdgeButtons(
             value,
           );
           if (mounted) setState(() {});
@@ -508,29 +517,70 @@ class _ReaderPageState extends State<ReaderPage> {
                     onOpenSettings: _openReaderSettings,
                   ),
                 ),
+                if (_showChapterEndActions)
+                  AnimatedPositioned(
+                    duration: const Duration(milliseconds: 180),
+                    curve: Curves.easeOutCubic,
+                    left: 16,
+                    right: 16,
+                    bottom: _chapterEndActionsBottom(context),
+                    child: _ReaderChapterEndActions(
+                      showPrevious: _showPreviousChapterAction,
+                      showNext: _showNextChapterAction,
+                      onPrevious: _previousChapter,
+                      onNext: _nextChapter,
+                    ),
+                  ),
+                AnimatedPositioned(
+                  duration: const Duration(milliseconds: 180),
+                  curve: Curves.easeOutCubic,
+                  left: 0,
+                  right: 0,
+                  bottom: _controlsVisible
+                      ? -(36 + MediaQuery.paddingOf(context).bottom)
+                      : 10 + MediaQuery.paddingOf(context).bottom,
+                  child: AnimatedOpacity(
+                    duration: const Duration(milliseconds: 160),
+                    opacity: _controlsVisible ? 0 : 1,
+                    child: Center(
+                      child: _ReaderCollapsedProgressPill(
+                        title:
+                            '${_displayedProgressPage.clamp(1, images.length)} / ${images.length}',
+                      ),
+                    ),
+                  ),
+                ),
                 AnimatedPositioned(
                   duration: const Duration(milliseconds: 180),
                   left: 16,
                   right: 16,
-                  bottom: _controlsVisible ? 16 : -148,
-                  child: _ReaderBottomPanel(
-                    title:
-                        '${_displayedProgressPage.clamp(1, images.length)} / ${images.length}',
-                    currentPage: _displayedProgressPage,
-                    pageCount: images.length,
-                    onChangeStart: _handleProgressChangeStart,
-                    onChanged: _handleProgressChanged,
-                    onChangeEnd: _handleProgressChangeEnd,
-                    onPrevChapter: _previousChapter,
-                    onPrevPage: _goToPreviousPage,
-                    onNextPage: _goToNextPage,
-                    onNextChapter: _nextChapter,
-                    showDownload: !_isPureLocalReader,
-                    isFullscreen: _isFullscreen,
-                    autoPageEnabled: _autoPageTimer != null,
-                    onDownload: _downloadFromReader,
-                    onToggleFullscreen: _toggleFullscreen,
-                    onToggleAutoPage: _toggleAutoPage,
+                  bottom: _controlsVisible
+                      ? 16.0
+                      : -((_bottomPanelHeight > 0
+                                ? _bottomPanelHeight
+                                : 180.0) +
+                            24.0),
+                  child: _MeasuredSize(
+                    onSizeChanged: _handleBottomPanelSizeChanged,
+                    child: _ReaderBottomPanel(
+                      title:
+                          '${_displayedProgressPage.clamp(1, images.length)} / ${images.length}',
+                      currentPage: _displayedProgressPage,
+                      pageCount: images.length,
+                      onChangeStart: _handleProgressChangeStart,
+                      onChanged: _handleProgressChanged,
+                      onChangeEnd: _handleProgressChangeEnd,
+                      onPrevChapter: _previousChapter,
+                      onPrevPage: _goToPreviousPage,
+                      onNextPage: _goToNextPage,
+                      onNextChapter: _nextChapter,
+                      showDownload: !_isPureLocalReader,
+                      isFullscreen: _isFullscreen,
+                      autoPageEnabled: _autoPageTimer != null,
+                      onDownload: _downloadFromReader,
+                      onToggleFullscreen: _toggleFullscreen,
+                      onToggleAutoPage: _toggleAutoPage,
+                    ),
                   ),
                 ),
               ],
@@ -547,6 +597,58 @@ class _ReaderPageState extends State<ReaderPage> {
       return currentPage;
     }
     return dragged.round().clamp(1, images.length);
+  }
+
+  int get _currentChapterIndex {
+    return _chapterItems.indexWhere((item) => item.id == currentChapterId);
+  }
+
+  bool get _hasPreviousChapter {
+    final index = _currentChapterIndex;
+    return _chapterItems.length > 1 && index > 0;
+  }
+
+  bool get _hasNextChapter {
+    final index = _currentChapterIndex;
+    return _chapterItems.length > 1 &&
+        index >= 0 &&
+        index < _chapterItems.length - 1;
+  }
+
+  bool get _showPreviousChapterAction {
+    return images.isNotEmpty && currentPage <= 1 && _hasPreviousChapter;
+  }
+
+  bool get _showNextChapterAction {
+    return images.isNotEmpty && currentPage >= images.length && _hasNextChapter;
+  }
+
+  bool get _showChapterEndActions {
+    return SettingsController.instance.readerShowChapterEdgeButtons &&
+        (_showPreviousChapterAction || _showNextChapterAction);
+  }
+
+  double _chapterEndActionsBottom(BuildContext context) {
+    if (_controlsVisible) {
+      final panelHeight = _bottomPanelHeight > 0 ? _bottomPanelHeight : 180.0;
+      return 16 + panelHeight + 10;
+    }
+
+    return MediaQuery.paddingOf(context).bottom + 44;
+  }
+
+  void _handleBottomPanelSizeChanged(Size size) {
+    final height = size.height;
+    if (height <= 0 || (_bottomPanelHeight - height).abs() < 1) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        setState(() {
+          _bottomPanelHeight = height;
+        });
+      }
+    });
   }
 
   void _handleProgressChangeStart(double value) {
@@ -621,6 +723,9 @@ class _ReaderPageState extends State<ReaderPage> {
           : const ClampingScrollPhysics(),
       itemCount: images.length,
       itemBuilder: (context, index) {
+        final reservedHeight = isVertical
+            ? (_verticalPageHeights[index] ?? _averageVerticalPageHeight())
+            : null;
         final image = _ReaderImage(
           key: _imageKeyFor(index),
           isLocal:
@@ -632,6 +737,7 @@ class _ReaderPageState extends State<ReaderPage> {
           index: index + 1,
           isActive: index + 1 == currentPage,
           fitWidth: isVertical,
+          reservedHeight: reservedHeight,
           onSizeChanged: isVertical
               ? (height) => _rememberVerticalPageHeight(index, height)
               : null,
@@ -1734,6 +1840,7 @@ class _ReaderImage extends StatefulWidget {
     required this.index,
     required this.isActive,
     this.fitWidth = false,
+    this.reservedHeight,
     this.onSizeChanged,
     this.onZoomChanged,
     super.key,
@@ -1747,6 +1854,7 @@ class _ReaderImage extends StatefulWidget {
   final int index;
   final bool isActive;
   final bool fitWidth;
+  final double? reservedHeight;
   final ValueChanged<double>? onSizeChanged;
   final ValueChanged<bool>? onZoomChanged;
 
@@ -1804,8 +1912,8 @@ class _ReaderImageState extends State<_ReaderImage>
       future: _future,
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
-          return const SizedBox(
-            height: 160,
+          return SizedBox(
+            height: widget.reservedHeight ?? 160,
             child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
           );
         }
@@ -2080,6 +2188,48 @@ class _ReaderError extends StatelessWidget {
   }
 }
 
+class _MeasuredSize extends StatefulWidget {
+  const _MeasuredSize({required this.child, required this.onSizeChanged});
+
+  final Widget child;
+  final ValueChanged<Size> onSizeChanged;
+
+  @override
+  State<_MeasuredSize> createState() => _MeasuredSizeState();
+}
+
+class _MeasuredSizeState extends State<_MeasuredSize> {
+  final GlobalKey _key = GlobalKey();
+  Size? _lastSize;
+
+  @override
+  Widget build(BuildContext context) {
+    _scheduleMeasure();
+    return KeyedSubtree(key: _key, child: widget.child);
+  }
+
+  void _scheduleMeasure() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      final renderObject = _key.currentContext?.findRenderObject();
+      if (renderObject is! RenderBox || !renderObject.hasSize) {
+        return;
+      }
+      final size = renderObject.size;
+      final previous = _lastSize;
+      if (previous != null &&
+          (previous.width - size.width).abs() < 1 &&
+          (previous.height - size.height).abs() < 1) {
+        return;
+      }
+      _lastSize = size;
+      widget.onSizeChanged(size);
+    });
+  }
+}
+
 class _MeasuredReaderImage extends StatefulWidget {
   const _MeasuredReaderImage({
     required this.child,
@@ -2196,6 +2346,150 @@ class _ReaderTopBar extends StatelessWidget {
               ),
               const SizedBox(width: 8),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ReaderChapterEndActions extends StatelessWidget {
+  const _ReaderChapterEndActions({
+    required this.showPrevious,
+    required this.showNext,
+    required this.onPrevious,
+    required this.onNext,
+  });
+
+  final bool showPrevious;
+  final bool showNext;
+  final VoidCallback onPrevious;
+  final VoidCallback onNext;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+    final previousLabel = l10n.isChinese ? '上一章' : 'Previous';
+    final nextLabel = l10n.isChinese ? '下一章' : 'Next';
+
+    return Row(
+      children: [
+        if (showPrevious)
+          _ReaderChapterEndButton(
+            icon: Icons.skip_previous,
+            label: previousLabel,
+            tooltip: l10n.isChinese ? '上一章' : 'Previous Chapter',
+            onPressed: onPrevious,
+          ),
+        const Spacer(),
+        if (showNext)
+          _ReaderChapterEndButton(
+            icon: Icons.skip_next,
+            label: nextLabel,
+            tooltip: l10n.isChinese ? '下一章' : 'Next Chapter',
+            onPressed: onNext,
+            iconAfterLabel: true,
+          ),
+      ],
+    );
+  }
+}
+
+class _ReaderChapterEndButton extends StatelessWidget {
+  const _ReaderChapterEndButton({
+    required this.icon,
+    required this.label,
+    required this.tooltip,
+    required this.onPressed,
+    this.iconAfterLabel = false,
+  });
+
+  final IconData icon;
+  final String label;
+  final String tooltip;
+  final VoidCallback onPressed;
+  final bool iconAfterLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final foreground = theme.colorScheme.primary;
+    final iconWidget = Icon(icon, size: 18, color: foreground);
+    final labelWidget = Text(
+      label,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: theme.textTheme.labelLarge?.copyWith(
+        color: foreground,
+        fontWeight: FontWeight.w700,
+      ),
+    );
+
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: theme.colorScheme.surface.withValues(alpha: 0.92),
+        borderRadius: BorderRadius.circular(999),
+        elevation: 2,
+        shadowColor: theme.colorScheme.shadow.withValues(alpha: 0.18),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(999),
+          onTap: onPressed,
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 40, maxWidth: 150),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(
+                color: theme.colorScheme.primary.withValues(alpha: 0.38),
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: iconAfterLabel
+                  ? [labelWidget, const SizedBox(width: 6), iconWidget]
+                  : [iconWidget, const SizedBox(width: 6), labelWidget],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ReaderCollapsedProgressPill extends StatelessWidget {
+  const _ReaderCollapsedProgressPill({required this.title});
+
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return IgnorePointer(
+      child: SizedBox(
+        width: 96,
+        height: 26,
+        child: Material(
+          color: theme.colorScheme.surface.withValues(alpha: 0.58),
+          borderRadius: BorderRadius.circular(999),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(
+                color: theme.colorScheme.outlineVariant.withValues(alpha: 0.18),
+              ),
+            ),
+            child: Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.labelMedium?.copyWith(
+                color: theme.colorScheme.onSurface.withValues(alpha: 0.88),
+                fontWeight: FontWeight.w800,
+              ),
+            ),
           ),
         ),
       ),
@@ -2416,6 +2710,7 @@ class _ReaderSettingsDrawer extends StatelessWidget {
     required this.pageMode,
     required this.volumeKeys,
     required this.horizontalContinuous,
+    required this.chapterEdgeButtons,
     required this.onTapToTurnChanged,
     required this.onReverseTapToTurnChanged,
     required this.onDoubleTapZoomChanged,
@@ -2424,6 +2719,7 @@ class _ReaderSettingsDrawer extends StatelessWidget {
     required this.onPageModeChanged,
     required this.onVolumeKeysChanged,
     required this.onHorizontalContinuousChanged,
+    required this.onChapterEdgeButtonsChanged,
   });
 
   final VoidCallback onClose;
@@ -2435,6 +2731,7 @@ class _ReaderSettingsDrawer extends StatelessWidget {
   final ReaderPageMode pageMode;
   final bool volumeKeys;
   final bool horizontalContinuous;
+  final bool chapterEdgeButtons;
   final ValueChanged<bool> onTapToTurnChanged;
   final ValueChanged<bool> onReverseTapToTurnChanged;
   final ValueChanged<bool> onDoubleTapZoomChanged;
@@ -2443,6 +2740,7 @@ class _ReaderSettingsDrawer extends StatelessWidget {
   final ValueChanged<ReaderPageMode> onPageModeChanged;
   final ValueChanged<bool> onVolumeKeysChanged;
   final ValueChanged<bool> onHorizontalContinuousChanged;
+  final ValueChanged<bool> onChapterEdgeButtonsChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -2514,6 +2812,18 @@ class _ReaderSettingsDrawer extends StatelessWidget {
                     title: Text(l10n.readerTapToTurn),
                     value: tapToTurn,
                     onChanged: onTapToTurnChanged,
+                  ),
+                  SwitchListTile(
+                    title: Text(
+                      l10n.isChinese ? '章节首尾按钮' : 'Chapter edge buttons',
+                    ),
+                    subtitle: Text(
+                      l10n.isChinese
+                          ? '在章节首页显示上一章，在页尾显示下一章。'
+                          : 'Show previous on the first page and next on the last page.',
+                    ),
+                    value: chapterEdgeButtons,
+                    onChanged: onChapterEdgeButtonsChanged,
                   ),
                   if (VolumeListener.isSupported)
                     SwitchListTile(

@@ -24,17 +24,24 @@ class ComicDetailsPage extends StatefulWidget {
 class _ComicDetailsPageState extends State<ComicDetailsPage> {
   late Future<PluginComicDetails> _future;
   final favoriteController = FavoriteController.instance;
+  final ScrollController _scrollController = ScrollController();
+  bool _showBackToTop = false;
+
+  static const _backToTopThreshold = 420.0;
 
   @override
   void initState() {
     super.initState();
     favoriteController.addListener(_onFavoriteChanged);
+    _scrollController.addListener(_onScrollChanged);
     _future = _loadComicDetails();
   }
 
   @override
   void dispose() {
     favoriteController.removeListener(_onFavoriteChanged);
+    _scrollController.removeListener(_onScrollChanged);
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -46,6 +53,7 @@ class _ComicDetailsPageState extends State<ComicDetailsPage> {
         future: _future,
         builder: (context, snapshot) {
           if (snapshot.connectionState != ConnectionState.done) {
+            _hideBackToTopAfterBuild();
             return const Center(
               child: SizedBox.square(
                 dimension: 32,
@@ -55,6 +63,7 @@ class _ComicDetailsPageState extends State<ComicDetailsPage> {
           }
 
           if (snapshot.hasError) {
+            _hideBackToTopAfterBuild();
             return _ComicDetailsError(
               message: snapshot.error.toString(),
               onRetry: _retry,
@@ -63,6 +72,7 @@ class _ComicDetailsPageState extends State<ComicDetailsPage> {
 
           final details = snapshot.data;
           if (details == null) {
+            _hideBackToTopAfterBuild();
             return _ComicDetailsError(
               message: 'No detail data returned.',
               onRetry: _retry,
@@ -75,6 +85,7 @@ class _ComicDetailsPageState extends State<ComicDetailsPage> {
           );
 
           return _ComicDetailsBody(
+            scrollController: _scrollController,
             summary: widget.comic,
             details: details,
             chaptersReversed: chaptersReversed,
@@ -91,7 +102,60 @@ class _ComicDetailsPageState extends State<ComicDetailsPage> {
           );
         },
       ),
+      floatingActionButton: AnimatedScale(
+        duration: const Duration(milliseconds: 160),
+        curve: Curves.easeOutCubic,
+        scale: _showBackToTop ? 1 : 0.86,
+        child: AnimatedOpacity(
+          duration: const Duration(milliseconds: 160),
+          opacity: _showBackToTop ? 1 : 0,
+          child: IgnorePointer(
+            ignoring: !_showBackToTop,
+            child: FloatingActionButton.small(
+              onPressed: _scrollToTop,
+              shape: const CircleBorder(),
+              child: const Icon(Icons.home_outlined),
+            ),
+          ),
+        ),
+      ),
     );
+  }
+
+  void _onScrollChanged() {
+    final next =
+        _scrollController.hasClients &&
+        _scrollController.offset > _backToTopThreshold;
+    if (next == _showBackToTop) {
+      return;
+    }
+    setState(() {
+      _showBackToTop = next;
+    });
+  }
+
+  void _scrollToTop() {
+    if (!_scrollController.hasClients) {
+      return;
+    }
+    _scrollController.animateTo(
+      0,
+      duration: const Duration(milliseconds: 260),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  void _hideBackToTopAfterBuild() {
+    if (!_showBackToTop) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        setState(() {
+          _showBackToTop = false;
+        });
+      }
+    });
   }
 
   Future<PluginComicDetails> _loadComicDetails() async {
@@ -279,6 +343,7 @@ class _ComicDetailsPageState extends State<ComicDetailsPage> {
 
 class _ComicDetailsBody extends StatelessWidget {
   const _ComicDetailsBody({
+    required this.scrollController,
     required this.summary,
     required this.details,
     required this.chaptersReversed,
@@ -290,6 +355,7 @@ class _ComicDetailsBody extends StatelessWidget {
     required this.onChapterSelected,
   });
 
+  final ScrollController scrollController;
   final PluginComic summary;
   final PluginComicDetails details;
   final bool chaptersReversed;
@@ -310,6 +376,7 @@ class _ComicDetailsBody extends StatelessWidget {
       builder: (context, constraints) {
         final isMobile = constraints.maxWidth < _mobileBreakpoint;
         return ListView(
+          controller: scrollController,
           padding: EdgeInsets.symmetric(
             horizontal: isMobile ? 0 : 24,
             vertical: isMobile ? 0 : 24,
