@@ -70,7 +70,11 @@ jobs:
           fi
 
           if [[ -f ios/Flutter/AppFrameworkInfo.plist ]]; then
-            /usr/libexec/PlistBuddy -c "Set :MinimumOSVersion 13.0" ios/Flutter/AppFrameworkInfo.plist
+            if /usr/libexec/PlistBuddy -c "Print :MinimumOSVersion" ios/Flutter/AppFrameworkInfo.plist >/dev/null 2>&1; then
+              /usr/libexec/PlistBuddy -c "Set :MinimumOSVersion 13.0" ios/Flutter/AppFrameworkInfo.plist
+            else
+              /usr/libexec/PlistBuddy -c "Add :MinimumOSVersion string 13.0" ios/Flutter/AppFrameworkInfo.plist
+            fi
           fi
 
           if [[ -f ios/Runner.xcodeproj/project.pbxproj ]]; then
