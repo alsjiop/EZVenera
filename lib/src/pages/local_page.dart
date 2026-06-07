@@ -565,6 +565,10 @@ class _LocalPageState extends State<LocalPage> {
 
   Future<void> _addFolder() async {
     final l10n = AppLocalizations.of(context);
+    if (!PlatformDirectory.canPickDirectory) {
+      _showMessage(l10n.settingsSelectFolderUnsupported);
+      return;
+    }
     try {
       final selected = await PlatformDirectory.pickDirectory();
       if (selected == null || selected.trim().isEmpty) {
@@ -629,6 +633,10 @@ class _LocalPageState extends State<LocalPage> {
 
   Future<void> _openDirectory(String path) async {
     final l10n = AppLocalizations.of(context);
+    if (!PlatformDirectory.canOpenDirectory) {
+      _showMessage(l10n.settingsDirectoryOpenUnsupported);
+      return;
+    }
     try {
       final opened = await PlatformDirectory.openDirectory(path);
       if (!opened) {

@@ -30,9 +30,9 @@ Future<void> main() async {
     unawaited(AppLogger.instance.error('Platform error', error, stackTrace));
     return false;
   };
+  await AppStateController.instance.initialize();
   if (Platform.isWindows) {
     await windowManager.ensureInitialized();
-    await AppStateController.instance.initialize();
   }
   runApp(const EZVeneraApp());
   if (Platform.isWindows) {

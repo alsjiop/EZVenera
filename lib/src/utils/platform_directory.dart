@@ -9,7 +9,14 @@ class PlatformDirectory {
 
   static const MethodChannel _channel = MethodChannel('ezvenera/directory');
 
+  static bool get canPickDirectory => !Platform.isIOS;
+
+  static bool get canOpenDirectory => !Platform.isIOS;
+
   static Future<String?> pickDirectory() async {
+    if (!canPickDirectory) {
+      return null;
+    }
     if (Platform.isAndroid) {
       final canUseExternalStorage =
           await _channel.invokeMethod<bool>('ensureStorageAccess') ?? false;
@@ -26,6 +33,9 @@ class PlatformDirectory {
   }
 
   static Future<bool> openDirectory(String path) async {
+    if (!canOpenDirectory) {
+      return false;
+    }
     if (Platform.isWindows) {
       await Process.start('explorer.exe', [path]);
       return true;

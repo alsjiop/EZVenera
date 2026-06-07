@@ -211,6 +211,10 @@ class AppLocalizations {
       'settings.pathUpdateFailed': 'Failed to update the path.',
       'settings.directoryOpenFailed': 'Failed to open the folder.',
       'settings.selectFolderFailed': 'Failed to open folder selector.',
+      'settings.directoryOpenUnsupported':
+          'Opening folders is not supported on this platform.',
+      'settings.selectFolderUnsupported':
+          'Selecting folders is not supported on this platform.',
       'settings.downloadedComicsCount': '{count} saved comic(s)',
       'settings.installedSources': 'Installed Sources',
       'settings.installedSourcesCount': '{count} source(s) loaded',
@@ -302,6 +306,8 @@ class AppLocalizations {
       'settings.pathUpdateFailed': '更新路径失败。',
       'settings.directoryOpenFailed': '无法打开该文件夹。',
       'settings.selectFolderFailed': '无法打开文件夹选择器。',
+      'settings.directoryOpenUnsupported': '当前平台不支持直接打开文件夹。',
+      'settings.selectFolderUnsupported': '当前平台不支持选择文件夹。',
       'settings.downloadedComicsCount': '已保存 {count} 部漫画',
       'settings.installedSources': '已安装图源',
       'settings.installedSourcesCount': '当前已加载 {count} 个图源',
@@ -646,6 +652,10 @@ class AppLocalizations {
       _value('settings.directoryOpenFailed');
   String get settingsSelectFolderFailed =>
       _value('settings.selectFolderFailed');
+  String get settingsDirectoryOpenUnsupported =>
+      _value('settings.directoryOpenUnsupported');
+  String get settingsSelectFolderUnsupported =>
+      _value('settings.selectFolderUnsupported');
   String settingsDownloadedComicsCount(int count) =>
       _value('settings.downloadedComicsCount').replaceAll('{count}', '$count');
   String get settingsInstalledSources => _value('settings.installedSources');

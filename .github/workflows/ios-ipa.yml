@@ -1,0 +1,142 @@
+name: Build iOS IPA
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+env:
+  IOS_ORG: com.ezvenera
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Validate tag version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          set -euo pipefail
+          pubspec_version="$(grep '^version:' pubspec.yaml | awk '{print $2}')"
+          version_name="${pubspec_version%%+*}"
+          tag_name="${GITHUB_REF_NAME#v}"
+          if [[ "$tag_name" != "$version_name" ]]; then
+            echo "Tag v${tag_name} does not match pubspec version ${version_name}."
+            exit 1
+          fi
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Create iOS scaffold if missing
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -d ios ]]; then
+            flutter create --platforms=ios --org "$IOS_ORG" --project-name ezvenera .
+          fi
+
+      - name: Normalize iOS deployment target
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f ios/Podfile ]]; then
+            ruby -e '
+              path = "ios/Podfile"
+              content = File.read(path)
+              if content.match?(/^platform :ios,/)
+                content = content.sub(
+                  /^platform :ios, .+$/,
+                  %q(platform :ios, '\''13.0'\''),
+                )
+              else
+                content = %Q(platform :ios, '\''13.0'\''\n) + content
+              end
+              File.write(path, content)
+            '
+          fi
+
+          if [[ -f ios/Flutter/AppFrameworkInfo.plist ]]; then
+            /usr/libexec/PlistBuddy -c "Set :MinimumOSVersion 13.0" ios/Flutter/AppFrameworkInfo.plist
+          fi
+
+          if [[ -f ios/Runner.xcodeproj/project.pbxproj ]]; then
+            ruby -e '
+              path = "ios/Runner.xcodeproj/project.pbxproj"
+              content = File.read(path).gsub(
+                /IPHONEOS_DEPLOYMENT_TARGET = [0-9.]+;/,
+                "IPHONEOS_DEPLOYMENT_TARGET = 13.0;",
+              )
+              File.write(path, content)
+            '
+          fi
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter pub get
+
+      - name: Build unsigned iOS app
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter build ios --release --no-codesign
+
+      - name: Package unsigned IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(grep '^version:' pubspec.yaml | awk '{print $2}' | cut -d+ -f1)"
+          app_path="build/ios/iphoneos/Runner.app"
+
+          if [[ ! -d "${app_path}" ]]; then
+            echo "::error::Missing built app bundle at ${app_path}"
+            exit 1
+          fi
+
+          mkdir -p build/ios/unsigned/Payload
+          cp -R "${app_path}" build/ios/unsigned/Payload/
+
+          mkdir -p pack
+          ditto -c -k --sequesterRsrc --keepParent \
+            build/ios/unsigned/Payload \
+            "pack/EZVenera-${version}-ios-unsigned.ipa"
+
+          ditto -c -k --sequesterRsrc --keepParent \
+            "${app_path}" \
+            "pack/EZVenera-${version}-ios-runner-app.zip"
+
+          shasum -a 256 "pack/EZVenera-${version}-ios-unsigned.ipa" > "pack/EZVenera-${version}-ios-unsigned.ipa.sha256"
+          shasum -a 256 "pack/EZVenera-${version}-ios-runner-app.zip" > "pack/EZVenera-${version}-ios-runner-app.zip.sha256"
+
+      - name: Upload iOS artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ezvenera-ios-unsigned
+          path: |
+            pack/*.ipa
+            pack/*.zip
+            pack/*.sha256
+
+      - name: Publish iOS asset to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            pack/*.ipa
+            pack/*.zip
+            pack/*.sha256

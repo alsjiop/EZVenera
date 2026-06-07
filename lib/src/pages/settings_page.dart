@@ -571,6 +571,10 @@ class _DownloadsSettingsPageState extends State<_DownloadsSettingsPage> {
 
   Future<void> _pickDownloadDirectory() async {
     final l10n = AppLocalizations.of(context);
+    if (!PlatformDirectory.canPickDirectory) {
+      _showSettingsMessage(context, l10n.settingsSelectFolderUnsupported);
+      return;
+    }
     try {
       final selected = await PlatformDirectory.pickDirectory();
       if (selected == null || selected.trim().isEmpty) {
@@ -1052,6 +1056,40 @@ class _BackupSettingsPageState extends State<_BackupSettingsPage> {
 
   Future<void> _exportBackup() async {
     final l10n = AppLocalizations.of(context);
+    if (Platform.isIOS) {
+      final navigator = Navigator.of(context, rootNavigator: true);
+      try {
+        File? exportedFile;
+        await _runBusyDialog(navigator, () async {
+          exportedFile = await BackupService.instance.exportToTemporaryFile();
+        });
+        final file = exportedFile;
+        if (file == null || !mounted) {
+          return;
+        }
+        await _openExportedFile(file.path);
+        if (!mounted) {
+          return;
+        }
+        _showSettingsMessage(
+          context,
+          _text(
+            l10n,
+            '备份已导出到临时文件，并尝试用系统方式打开。',
+            'Backup exported to a temporary file and opened with the system handler.',
+          ),
+        );
+      } catch (error) {
+        if (!mounted) {
+          return;
+        }
+        _showSettingsMessage(
+          context,
+          _text(l10n, '导出备份失败：$error', 'Failed to export backup: $error'),
+        );
+      }
+      return;
+    }
     final location = await getSaveLocation(
       acceptedTypeGroups: const <XTypeGroup>[
         XTypeGroup(label: 'EZVenera Backup', extensions: <String>['ezvenera']),
@@ -1237,6 +1275,17 @@ class _AboutSettingsPageState extends State<_AboutSettingsPage> {
 
   Future<void> _checkForUpdates() async {
     final l10n = AppLocalizations.of(context);
+    if (Platform.isIOS) {
+      _showSettingsMessage(
+        context,
+        _text(
+          l10n,
+          'iOS 暂不支持应用内更新，请前往 GitHub Release 下载 ipa。',
+          'In-app update is not available on iOS yet. Download the IPA from GitHub Releases.',
+        ),
+      );
+      return;
+    }
     try {
       final packageInfo = await PackageInfo.fromPlatform();
       final currentVersion = packageInfo.version;
@@ -1537,6 +1586,12 @@ class _AboutSettingsPageState extends State<_AboutSettingsPage> {
       return;
     }
 
+    if (Platform.isIOS) {
+      throw UnsupportedError(
+        'In-app installer launch is not supported on iOS.',
+      );
+    }
+
     final launched = await launchUrl(
       Uri.file(path),
       mode: LaunchMode.externalApplication,
@@ -1705,6 +1760,35 @@ class _LogSettingsPageState extends State<_LogSettingsPage> {
 
   Future<void> _exportLog() async {
     final l10n = AppLocalizations.of(context);
+    if (Platform.isIOS) {
+      final temporaryDirectory = await getTemporaryDirectory();
+      final path =
+          '${temporaryDirectory.path}${Platform.pathSeparator}EZVenera.log';
+      try {
+        await AppLogger.instance.exportToPath(path);
+        await _openExportedFile(path);
+        if (!mounted) {
+          return;
+        }
+        _showSettingsMessage(
+          context,
+          _text(
+            l10n,
+            '日志已导出到临时文件，并尝试用系统方式打开。',
+            'Log exported to a temporary file and opened with the system handler.',
+          ),
+        );
+      } catch (error) {
+        if (!mounted) {
+          return;
+        }
+        _showSettingsMessage(
+          context,
+          _text(l10n, '导出日志失败：$error', 'Failed to export log: $error'),
+        );
+      }
+      return;
+    }
     final location = await getSaveLocation(
       acceptedTypeGroups: const <XTypeGroup>[
         XTypeGroup(label: 'Log File', extensions: <String>['log']),
@@ -2072,6 +2156,22 @@ Future<void> _runBusyDialog(
   }
 }
 
+Future<void> _openExportedFile(String path) async {
+  final result = await OpenFilex.open(path);
+  if (result.type == ResultType.done) {
+    return;
+  }
+  final launched = await launchUrl(
+    Uri.file(path),
+    mode: LaunchMode.externalApplication,
+  );
+  if (!launched) {
+    throw StateError(
+      result.message.isEmpty ? 'Unable to open exported file.' : result.message,
+    );
+  }
+}
+
 void _showSettingsMessage(BuildContext context, String message) {
   if (!context.mounted) {
     return;
@@ -2093,6 +2193,10 @@ String _reportMessage(AppLocalizations l10n, BackupImportReport report) {
 
 Future<void> _openDirectory(BuildContext context, String path) async {
   final l10n = AppLocalizations.of(context);
+  if (!PlatformDirectory.canOpenDirectory) {
+    _showSettingsMessage(context, l10n.settingsDirectoryOpenUnsupported);
+    return;
+  }
   try {
     final opened = await PlatformDirectory.openDirectory(path);
     if (!opened) {
