@@ -536,10 +536,12 @@ class _DownloadsSettingsPageState extends State<_DownloadsSettingsPage> {
                 openLabel: l10n.settingsOpenFolder,
                 selectLabel: l10n.settingsSelectFolder,
                 defaultLabel: l10n.settingsUseDefaultPath,
-                onOpen: downloadPath == null
+                onOpen: !PlatformDirectory.canOpenDirectory || downloadPath == null
                     ? null
                     : () => _openDirectory(context, downloadPath!),
-                onSelect: _pickDownloadDirectory,
+                onSelect: PlatformDirectory.canPickDirectory
+                    ? _pickDownloadDirectory
+                    : null,
                 onUseDefault: controller.downloadDirectoryPath == null
                     ? null
                     : _resetDownloadDirectory,
@@ -1124,15 +1126,32 @@ class _BackupSettingsPageState extends State<_BackupSettingsPage> {
 
   Future<void> _importBackup() async {
     final l10n = AppLocalizations.of(context);
-    final file = await openFile(
-      acceptedTypeGroups: const <XTypeGroup>[
-        XTypeGroup(
-          label: 'Venera Backup',
-          extensions: <String>['ezvenera', 'venera'],
-        ),
-      ],
-    );
+    final file = Platform.isIOS
+        ? await openFile()
+        : await openFile(
+            acceptedTypeGroups: const <XTypeGroup>[
+              XTypeGroup(
+                label: 'Venera Backup',
+                extensions: <String>['ezvenera', 'venera'],
+              ),
+            ],
+          );
     if (file == null) {
+      return;
+    }
+    final lowerPath = file.path.toLowerCase();
+    if (!lowerPath.endsWith('.ezvenera') && !lowerPath.endsWith('.venera')) {
+      if (!mounted) {
+        return;
+      }
+      _showSettingsMessage(
+        context,
+        _text(
+          l10n,
+          '请选择 .ezvenera 或 .venera 备份文件。',
+          'Please select a .ezvenera or .venera backup file.',
+        ),
+      );
       return;
     }
     if (!mounted) {
@@ -2052,7 +2071,7 @@ class _PathSettingTile extends StatelessWidget {
   final String openLabel;
   final String selectLabel;
   final String defaultLabel;
-  final VoidCallback onSelect;
+  final VoidCallback? onSelect;
   final VoidCallback? onOpen;
   final VoidCallback? onUseDefault;
 

@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
@@ -211,15 +212,23 @@ class _SourcesPageState extends State<SourcesPage> {
   Future<void> _installFromLocalFile() async {
     final l10n = AppLocalizations.of(context);
     try {
-      const typeGroup = XTypeGroup(
-        label: 'JavaScript',
-        extensions: <String>['js'],
-      );
-      final file = await openFile(
-        acceptedTypeGroups: const <XTypeGroup>[typeGroup],
-      );
+      final file = Platform.isIOS
+          ? await openFile()
+          : await openFile(
+              acceptedTypeGroups: const <XTypeGroup>[
+                XTypeGroup(
+                  label: 'JavaScript',
+                  extensions: <String>['js'],
+                ),
+              ],
+            );
       if (file == null) {
         return;
+      }
+      if (!file.path.toLowerCase().endsWith('.js')) {
+        throw StateError(
+          l10n.isChinese ? '请选择 .js 图源文件。' : 'Please select a .js source file.',
+        );
       }
 
       final source = await controller.installFromLocalFile(file.path);
